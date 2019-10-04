@@ -12,6 +12,7 @@ struct nf_config config;
 struct FlowManager *flow_manager;
 
 bool nf_init(void) {
+  // initialize the data strcutre
   flow_manager = flow_manager_allocate(
       config.start_port, config.external_addr, config.wan_device,
       config.expiration_time, config.max_flows);
@@ -22,7 +23,7 @@ bool nf_init(void) {
 int nf_process(uint16_t device, uint8_t* buffer, uint16_t buffer_length, vigor_time_t now) {
   NF_DEBUG("It is %" PRId64, now);
 
-  flow_manager_expire(flow_manager, now);
+  flow_manager_expire(flow_manager, now); // delete all obsolete entries from the NAT table: Should be re debugged later to see how the data structures are addressed
   NF_DEBUG("Flows have been expired");
 
   struct ether_hdr *ether_header = nf_then_get_ether_header(buffer);
@@ -43,7 +44,7 @@ int nf_process(uint16_t device, uint8_t* buffer, uint16_t buffer_length, vigor_t
   NF_DEBUG("Forwarding an IPv4 packet on device %" PRIu16, device);
 
   uint16_t dst_device;
-  if (device == config.wan_device) {
+  if (device == config.wan_device) { // this should be the response code path, debug later and see
     NF_DEBUG("Device %" PRIu16 " is external", device);
 
     struct FlowId internal_flow;
@@ -80,12 +81,12 @@ int nf_process(uint16_t device, uint8_t* buffer, uint16_t buffer_length, vigor_t
     NF_DEBUG("Device %" PRIu16 " is internal (not %" PRIu16 ")", device,
              config.wan_device);
 
-    uint16_t external_port;
-    if (!flow_manager_get_internal(flow_manager, &id, now, &external_port)) {
+    uint16_t external_port; // this is the port that NAT assignes to the packet
+    if (!flow_manager_get_internal(flow_manager, &id, now, &external_port)) { // checks the table whether the entry is already there
       NF_DEBUG("New flow");
 
       if (!flow_manager_allocate_flow(flow_manager, &id, device, now,
-                                      &external_port)) {
+                                      &external_port)) { // assign a port number and allocates a new entry in the NAT table
         NF_DEBUG("No space for the flow, dropping");
         return device;
       }

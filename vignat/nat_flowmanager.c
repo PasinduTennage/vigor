@@ -61,7 +61,7 @@ void flow_manager_expire(struct FlowManager *manager, vigor_time_t time) {
   vigor_time_t last_time =
       time_u - manager->expiration_time * 1000; // convert us to ns
   expire_items_single_map(manager->state->heap, manager->state->fv,
-                          manager->state->fm, last_time);
+                          manager->state->fm, last_time); // deletes all the entries in the NAT table which have time stamp < last_time
 }
 
 bool flow_manager_get_internal(struct FlowManager *manager, struct FlowId *id,

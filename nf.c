@@ -167,8 +167,8 @@ static void lcore_main(void) {
 
   VIGOR_LOOP_BEGIN
     struct rte_mbuf *mbuf;
-    if (nf_receive_packet(VIGOR_DEVICE, &mbuf)) {
-      uint8_t* packet = rte_pktmbuf_mtod(mbuf, uint8_t*);
+    if (nf_receive_packet(VIGOR_DEVICE, &mbuf)) { //read a single packet and put it into mbuf
+      uint8_t* packet = rte_pktmbuf_mtod(mbuf, uint8_t*); //A macro that points to the start of the data in the mbuf. The returned pointer is cast to type uint8_t
       uint16_t dst_device = nf_process(mbuf->port, packet, mbuf->data_len, VIGOR_NOW);
       nf_return_all_chunks(packet);
 
