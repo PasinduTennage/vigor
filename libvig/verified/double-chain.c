@@ -1,3 +1,4 @@
+#include <pthread.h>
 #include "double-chain.h"
 
 #include <stdlib.h>
@@ -10,12 +11,40 @@
 //@ #include "stdex.gh"
 
 #ifndef NULL
-#define NULL 0
-#endif//NULL
+#  define NULL 0
+#endif // NULL
+
+struct Lock_Switch {
+  int counter;
+  pthread_mutex_t lock;
+};
+
+void lock(struct Lock_Switch *lock_switch, pthread_mutex_t *lock) {
+  pthread_mutex_lock(&(lock_switch->lock));
+  lock_switch->counter++;
+  if (lock_switch->counter == 1) {
+    pthread_mutex_lock(lock);
+  }
+  pthread_mutex_unlock(&(lock_switch->lock));
+}
+
+void unlock(struct Lock_Switch *lock_switch, pthread_mutex_t *lock) {
+  pthread_mutex_lock(&(lock_switch->lock));
+  lock_switch->counter--;
+  if (lock_switch->counter == 0) {
+    pthread_mutex_unlock(lock);
+  }
+  pthread_mutex_unlock(&(lock_switch->lock));
+}
 
 struct DoubleChain {
-  struct dchain_cell* cells;
+  struct dchain_cell *cells;
   vigor_time_t *timestamps;
+  struct Lock_Switch readSwitch;
+  struct Lock_Switch writeSwitch;
+  pthread_mutex_t mutex;
+  pthread_mutex_t noReaders;
+  pthread_mutex_t noWriters;
 };
 
 /*@
@@ -95,14 +124,14 @@ struct DoubleChain {
       case succ(n):
         assert 1 <= int_of_nat(len);
         mul_mono(1, int_of_nat(len), sizeof(struct dchain_cell));
-        assert sizeof(struct dchain_cell) <= int_of_nat(len)*sizeof(struct dchain_cell);
-        chars_split(dc, sizeof(struct dchain_cell));
-        assert int_of_nat(len)*sizeof(struct dchain_cell) - sizeof(struct dchain_cell) ==
+        assert sizeof(struct dchain_cell) <= int_of_nat(len)*sizeof(struct
+  dchain_cell); chars_split(dc, sizeof(struct dchain_cell)); assert
+  int_of_nat(len)*sizeof(struct dchain_cell) - sizeof(struct dchain_cell) ==
                (int_of_nat(len)-1)*sizeof(struct dchain_cell);
         assert int_of_nat(len)-1 == int_of_nat(n);
         mul_subst(int_of_nat(len)-1, int_of_nat(n), sizeof(struct dchain_cell));
-        assert int_of_nat(len)*sizeof(struct dchain_cell) - sizeof(struct dchain_cell) ==
-               int_of_nat(n)*sizeof(struct dchain_cell);
+        assert int_of_nat(len)*sizeof(struct dchain_cell) - sizeof(struct
+  dchain_cell) == int_of_nat(n)*sizeof(struct dchain_cell);
         bytes_to_dcells(dc+sizeof(struct dchain_cell), n);
         bytes_to_dcell(dc);
         close dcellsp(dc, int_of_nat(len), _);
@@ -110,21 +139,22 @@ struct DoubleChain {
   }
   @*/
 
-int dchain_allocate(int index_range, struct DoubleChain** chain_out)
-  /*@ requires *chain_out |-> ?old_val &*&
-               0 < index_range &*& index_range <= IRANG_LIMIT; @*/
-  /*@ ensures result == 0 ?
-               *chain_out |-> old_val :
-               (result == 1 &*&
-                *chain_out |-> ?chp &*&
-                double_chainp(empty_dchain_fp(index_range, 0), chp));
-   @*/
+int dchain_allocate(int index_range, struct DoubleChain **chain_out)
+/*@ requires *chain_out |-> ?old_val &*&
+             0 < index_range &*& index_range <= IRANG_LIMIT; @*/
+/*@ ensures result == 0 ?
+             *chain_out |-> old_val :
+             (result == 1 &*&
+              *chain_out |-> ?chp &*&
+              double_chainp(empty_dchain_fp(index_range, 0), chp));
+ @*/
 {
-
-  struct DoubleChain* old_chain_out = *chain_out;
-  struct DoubleChain* chain_alloc = (struct DoubleChain*) malloc(sizeof(struct DoubleChain));
-  if (chain_alloc == NULL) return 0;
-  *chain_out = (struct DoubleChain*) chain_alloc;
+  struct DoubleChain *old_chain_out = *chain_out;
+  struct DoubleChain *chain_alloc =
+      (struct DoubleChain *)malloc(sizeof(struct DoubleChain));
+  if (chain_alloc == NULL)
+    return 0;
+  *chain_out = (struct DoubleChain *)chain_alloc;
 
   //@ dcell_layout_assumptions((*chain_out)->cells);
 
@@ -132,8 +162,8 @@ int dchain_allocate(int index_range, struct DoubleChain** chain_out)
     mul_bounds(sizeof (struct dchain_cell), 1024,
                (index_range + DCHAIN_RESERVED), IRANG_LIMIT + DCHAIN_RESERVED);
     @*/
-  struct dchain_cell* cells_alloc =
-    (struct dchain_cell*) malloc(sizeof (struct dchain_cell)*(index_range + DCHAIN_RESERVED));
+  struct dchain_cell *cells_alloc = (struct dchain_cell *)malloc(
+      sizeof(struct dchain_cell) * (index_range + DCHAIN_RESERVED));
   if (cells_alloc == NULL) {
     free(chain_alloc);
     *chain_out = old_chain_out;
@@ -141,14 +171,28 @@ int dchain_allocate(int index_range, struct DoubleChain** chain_out)
   }
   (*chain_out)->cells = cells_alloc;
 
-  vigor_time_t* timestamps_alloc = (vigor_time_t*) malloc(sizeof(vigor_time_t)*(index_range));
+  vigor_time_t *timestamps_alloc =
+      (vigor_time_t *)malloc(sizeof(vigor_time_t) * (index_range));
   if (timestamps_alloc == NULL) {
-    free((void*)cells_alloc);
+    free((void *)cells_alloc);
     free(chain_alloc);
     *chain_out = old_chain_out;
     return 0;
   }
   (*chain_out)->timestamps = timestamps_alloc;
+
+
+  if (pthread_mutex_init(&((*chain_out)->readSwitch.lock), NULL) != 0 ||
+      pthread_mutex_init(&((*chain_out)->writeSwitch.lock), NULL) != 0 ||
+      pthread_mutex_init(&((*chain_out)->mutex), NULL) != 0 ||
+      pthread_mutex_init(&((*chain_out)->noReaders), NULL) != 0 ||
+      pthread_mutex_init(&((*chain_out)->noWriters), NULL) != 0) {
+    printf("\n mutex init failed\n");
+    return 0;
+  }
+
+  (*chain_out)->readSwitch.counter = 0;
+  (*chain_out)->writeSwitch.counter = 0;
 
   //@ bytes_to_dcells(cells_alloc, nat_of_int(index_range + DCHAIN_RESERVED));
   dchain_impl_init((*chain_out)->cells, index_range);
@@ -173,8 +217,9 @@ int dchain_allocate(int index_range, struct DoubleChain** chain_out)
 
   lemma void insync_both_out_of_space(dchaini chi, dchain ch, list<int> tstmps)
   requires dchaini_irange_fp(chi) == dchain_index_range_fp(ch) &*&
-           true == insync_fp(dchaini_alist_fp(chi), tstmps, dchain_alist_fp(ch));
-  ensures dchaini_out_of_space_fp(chi) == dchain_out_of_space_fp(ch);
+           true == insync_fp(dchaini_alist_fp(chi), tstmps,
+  dchain_alist_fp(ch)); ensures dchaini_out_of_space_fp(chi) ==
+  dchain_out_of_space_fp(ch);
   {
     switch(ch) { case dchain(alist, size, l, h):
       switch(chi) { case dchaini(bare_alist, size1):
@@ -187,10 +232,9 @@ int dchain_allocate(int index_range, struct DoubleChain** chain_out)
   @*/
 
 /*@
-  lemma void extract_timestamp(vigor_time_t* arr, list<vigor_time_t> tstmps, int i)
-  requires times(arr, ?size, tstmps) &*& 0 <= i &*& i < size;
-  ensures times(arr, i, take(i, tstmps)) &*&
-          time_integer(arr+i, nth(i, tstmps)) &*&
+  lemma void extract_timestamp(vigor_time_t* arr, list<vigor_time_t> tstmps, int
+  i) requires times(arr, ?size, tstmps) &*& 0 <= i &*& i < size; ensures
+  times(arr, i, take(i, tstmps)) &*& time_integer(arr+i, nth(i, tstmps)) &*&
           times(arr+i+1, size-i-1, drop(i+1, tstmps));
   {
     switch(tstmps) {
@@ -228,15 +272,15 @@ int dchain_allocate(int index_range, struct DoubleChain** chain_out)
 /*@
   lemma void dchaini_allocate_keep_irange(dchaini chi, int idx)
   requires true;
-  ensures dchaini_irange_fp(chi) == dchaini_irange_fp(dchaini_allocate_fp(chi, idx));
+  ensures dchaini_irange_fp(chi) == dchaini_irange_fp(dchaini_allocate_fp(chi,
+  idx));
   {
     switch(chi) { case dchaini(alist, size):
     }
   }
 
-  lemma void allocate_preserves_index_range(dchain ch, int idx, vigor_time_t time)
-  requires true;
-  ensures dchain_index_range_fp(ch) ==
+  lemma void allocate_preserves_index_range(dchain ch, int idx, vigor_time_t
+  time) requires true; ensures dchain_index_range_fp(ch) ==
           dchain_index_range_fp(dchain_allocate_fp(ch, idx, time));
   {
     switch(ch) { case dchain(alist, size, l, h):
@@ -338,17 +382,17 @@ int dchain_allocate(int index_range, struct DoubleChain** chain_out)
   @*/
 
 /*@
-  lemma void allocate_keeps_high_bounded(dchain ch, int index, vigor_time_t time)
-  requires dchain_high_fp(ch) <= time;
-  ensures dchain_high_fp(dchain_allocate_fp(ch, index, time)) <= time;
+  lemma void allocate_keeps_high_bounded(dchain ch, int index, vigor_time_t
+  time) requires dchain_high_fp(ch) <= time; ensures
+  dchain_high_fp(dchain_allocate_fp(ch, index, time)) <= time;
   {
     switch(ch) { case dchain(alist, ir, lo, hi):
     }
   }
   @*/
 
-int dchain_allocate_new_index(struct DoubleChain* chain,
-                              int *index_out, vigor_time_t time)
+int dchain_allocate_new_index(struct DoubleChain *chain, int *index_out,
+                              vigor_time_t time)
 /*@ requires double_chainp(?ch, chain) &*&
              *index_out |-> ?i &*&
              dchain_high_fp(ch) <= time; @*/
@@ -368,8 +412,16 @@ int dchain_allocate_new_index(struct DoubleChain* chain,
   //@ assert dchainip(?chi, cells);
   //@ assert times(timestamps, dchain_index_range_fp(ch), ?tstmps);
   //@ insync_both_out_of_space(chi, ch, tstmps);
+  lock(&(chain->writeSwitch), &(chain->noReaders));
+  pthread_mutex_lock(&(chain->noWriters));
+
   int ret = dchain_impl_allocate_new_index(chain->cells, index_out);
+
+  pthread_mutex_unlock(&(chain->noWriters));
+  unlock(&(chain->writeSwitch), &(chain->noReaders));
+
   //@ assert *index_out |-> ?ni;
+
   if (ret) {
     //@ extract_timestamp(timestamps, tstmps, ni);
     chain->timestamps[*index_out] = time;
@@ -379,11 +431,14 @@ int dchain_allocate_new_index(struct DoubleChain* chain,
     //@ dchaini_allocate_keep_irange(chi, ni);
     //@ allocate_preserves_index_range(ch, ni, time);
     //@ dchaini_allocated_def(chi, ni);
-    //@ insync_append(dchaini_alist_fp(chi), dchain_alist_fp(ch), tstmps, ni, time);
+    //@ insync_append(dchaini_alist_fp(chi), dchain_alist_fp(ch), tstmps, ni,
+    // time);
     //@ dchaini_allocate_def(chi, ni);
-    //@ insync_mem_exists_same_index(dchaini_alist_fp(chi), dchain_alist_fp(ch), tstmps, ni);
+    //@ insync_mem_exists_same_index(dchaini_alist_fp(chi), dchain_alist_fp(ch),
+    // tstmps, ni);
     //@ dchain_allocated_def(ch, ni);
-    //@ allocate_keeps_bnd_sorted(dchain_alist_fp(ch), ni, dchain_low_fp(ch), time, dchain_high_fp(ch));
+    //@ allocate_keeps_bnd_sorted(dchain_alist_fp(ch), ni, dchain_low_fp(ch),
+    // time, dchain_high_fp(ch));
     //@ close double_chainp(dchain_allocate_fp(ch, ni, time), chain);
   } else {
     //@ close double_chainp(ch, chain);
@@ -401,9 +456,8 @@ int dchain_allocate_new_index(struct DoubleChain* chain,
     }
   }
 
-  lemma void rejuvenate_preserves_index_range(dchain ch, int idx, vigor_time_t time)
-  requires true;
-  ensures dchain_index_range_fp(ch) ==
+  lemma void rejuvenate_preserves_index_range(dchain ch, int idx, vigor_time_t
+  time) requires true; ensures dchain_index_range_fp(ch) ==
           dchain_index_range_fp(dchain_rejuvenate_fp(ch, idx, time));
   {
     switch(ch) { case dchain(alist, size, l, h):
@@ -571,9 +625,8 @@ int dchain_allocate_new_index(struct DoubleChain* chain,
   requires true == bnd_sorted_fp(map(snd, alist), low, high) &*&
            high <= time &*&
            low <= high;
-  ensures true == bnd_sorted_fp(map(snd, append(remove_by_index_fp(alist, index),
-                                                cons(pair(index, time), nil))),
-                                low, time);
+  ensures true == bnd_sorted_fp(map(snd, append(remove_by_index_fp(alist,
+  index), cons(pair(index, time), nil))), low, time);
   {
     remove_index_keeps_bnd_sorted(alist, index, low, high);
     allocate_keeps_bnd_sorted(remove_by_index_fp(alist, index), index,
@@ -582,9 +635,8 @@ int dchain_allocate_new_index(struct DoubleChain* chain,
   @*/
 
 /*@
-  lemma void rejuvenate_keeps_high_bounded(dchain ch, int index, vigor_time_t time)
-  requires double_chainp(ch, ?chain) &*&
-           dchain_high_fp(ch) <= time;
+  lemma void rejuvenate_keeps_high_bounded(dchain ch, int index, vigor_time_t
+  time) requires double_chainp(ch, ?chain) &*& dchain_high_fp(ch) <= time;
   ensures double_chainp(ch, chain) &*&
           dchain_high_fp(dchain_rejuvenate_fp(ch, index, time)) <= time;
   {
@@ -597,12 +649,10 @@ int dchain_allocate_new_index(struct DoubleChain* chain,
   @*/
 
 /*@
-  lemma void bnd_sorted_this_less_than_high(list<pair<int, vigor_time_t> > alist,
-                                            int index,
-                                            vigor_time_t low, vigor_time_t high)
-  requires true == bnd_sorted_fp(map(snd, alist), low, high) &*&
-           true == exists(alist, (same_index)(index));
-  ensures alist_get_fp(alist, index) <= high;
+  lemma void bnd_sorted_this_less_than_high(list<pair<int, vigor_time_t> >
+  alist, int index, vigor_time_t low, vigor_time_t high) requires true ==
+  bnd_sorted_fp(map(snd, alist), low, high) &*& true == exists(alist,
+  (same_index)(index)); ensures alist_get_fp(alist, index) <= high;
   {
     switch(alist) {
       case nil: return;
@@ -613,8 +663,8 @@ int dchain_allocate_new_index(struct DoubleChain* chain,
   }
   @*/
 
-int dchain_rejuvenate_index(struct DoubleChain* chain,
-                            int index, vigor_time_t time)
+int dchain_rejuvenate_index(struct DoubleChain *chain, int index,
+                            vigor_time_t time)
 /*@ requires double_chainp(?ch, chain) &*&
              0 <= index &*& index < dchain_index_range_fp(ch) &*&
              dchain_high_fp(ch) <= time; @*/
@@ -633,7 +683,13 @@ int dchain_rejuvenate_index(struct DoubleChain* chain,
   //@ assert times(timestamps, size, ?tmstmps);
 
   //@ dc_alist_no_dups(chi, index);
+  lock(&(chain->writeSwitch), &(chain->noReaders));
+  pthread_mutex_lock(&(chain->noWriters));
+
   int ret = dchain_impl_rejuvenate_index(chain->cells, index);
+
+  pthread_mutex_unlock(&(chain->noWriters));
+  unlock(&(chain->writeSwitch), &(chain->noReaders));
   //@ dchaini_allocated_def(chi, index);
   /*@ insync_mem_exists_same_index(dchaini_alist_fp(chi),
                                    dchain_alist_fp(ch), tmstmps, index);
@@ -769,10 +825,10 @@ int dchain_rejuvenate_index(struct DoubleChain* chain,
   }
   @*/
 
-int dchain_expire_one_index(struct DoubleChain* chain,
-                            int* index_out, vigor_time_t time)
+int dchain_expire_one_index(struct DoubleChain *chain, int *index_out,
+                            vigor_time_t time)
 /*@ requires double_chainp(?ch, chain) &*&
-             *index_out |-> ?io; @*/
+ *index_out |-> ?io; @*/
 /*@ ensures (dchain_is_empty_fp(ch) ?
              (double_chainp(ch, chain) &*&
               *index_out |-> io &*&
@@ -792,20 +848,36 @@ int dchain_expire_one_index(struct DoubleChain* chain,
   //@ assert dchainip(?chi, cells);
   //@ int size = dchain_index_range_fp(ch);
   //@ assert times(timestamps, size, ?tmstmps);
+
+  pthread_mutex_lock(&(chain->noReaders));
+  lock(&(chain->readSwitch), &(chain->noWriters));
+  pthread_mutex_unlock(&(chain->noReaders));
+
   int has_ind = dchain_impl_get_oldest_index(chain->cells, index_out);
+
+  unlock(&(chain->readSwitch), &(chain->noWriters));
+
   //@ is_empty_def(ch, chi);
   //@ insync_both_empty(dchaini_alist_fp(chi), tmstmps, dchain_alist_fp(ch));
   //@ assert dchaini_is_empty_fp(chi) == dchain_is_empty_fp(ch);
   if (has_ind) {
     //@ get_oldest_index_def(ch, chi);
-    //@ insync_head_matches(dchaini_alist_fp(chi), tmstmps, dchain_alist_fp(ch));
+    //@ insync_head_matches(dchaini_alist_fp(chi), tmstmps,
+    // dchain_alist_fp(ch));
     //@ assert *index_out |-> ?oi;
     //@ insync_get_oldest_time(ch, chi, tmstmps);
     //@ extract_timestamp(timestamps, tmstmps, oi);
     if (chain->timestamps[*index_out] < time) {
       //@ glue_timestamp(timestamps, tmstmps, oi);
       //@ assert nth(oi, tmstmps) == dchain_get_oldest_time_fp(ch);
+      lock(&(chain->writeSwitch), &(chain->noReaders));
+      pthread_mutex_lock(&(chain->noWriters));
+
       int rez = dchain_impl_free_index(chain->cells, *index_out);
+
+      pthread_mutex_unlock(&(chain->noWriters));
+      unlock(&(chain->writeSwitch), &(chain->noReaders));
+
       /*@
         {
           assert rez == 1;
@@ -828,9 +900,8 @@ int dchain_expire_one_index(struct DoubleChain* chain,
 /*@
   lemma void dchain_allocated_dchaini_allocated(list<int> bare_alist,
                                                 list<int> tstmps,
-                                                list<pair<int, vigor_time_t> > alist,
-                                                int index)
-  requires true == insync_fp(bare_alist, tstmps, alist);
+                                                list<pair<int, vigor_time_t> >
+  alist, int index) requires true == insync_fp(bare_alist, tstmps, alist);
   ensures exists(alist, (same_index)(index)) == mem(index, bare_alist);
   {
     switch(bare_alist) {
@@ -845,7 +916,7 @@ int dchain_expire_one_index(struct DoubleChain* chain,
   }
   @*/
 
-int dchain_is_index_allocated(struct DoubleChain* chain, int index)
+int dchain_is_index_allocated(struct DoubleChain *chain, int index)
 /*@ requires double_chainp(?ch, chain) &*&
              0 <= index &*& index < dchain_index_range_fp(ch); @*/
 /*@ ensures double_chainp(ch, chain) &*&
@@ -861,15 +932,26 @@ int dchain_is_index_allocated(struct DoubleChain* chain, int index)
       case dchain(alist, index_range, low, high):
         switch(chi) {
           case dchaini(bare_alist, i_rng):
-            dchain_allocated_dchaini_allocated(bare_alist, tstamps, alist, index);
+            dchain_allocated_dchaini_allocated(bare_alist, tstamps, alist,
+    index);
         }
     }
     @*/
-  return dchain_impl_is_index_allocated(chain->cells, index);
+  pthread_mutex_lock(&(chain->noReaders));
+
+  lock(&(chain->readSwitch), &(chain->noWriters));
+
+  pthread_mutex_unlock(&(chain->noReaders));
+  
+  int allocated = dchain_impl_is_index_allocated(chain->cells, index);
+  
+  unlock(&(chain->readSwitch), &(chain->noWriters));
+  
+  return allocated;
   //@ close double_chainp(ch, chain);
 }
 
-int dchain_free_index(struct DoubleChain* chain, int index)
+int dchain_free_index(struct DoubleChain *chain, int index)
 /*@ requires double_chainp(?ch, chain) &*&
              0 <= index &*& index < dchain_index_range_fp(ch); @*/
 /*@ ensures double_chainp(?new_ch, chain) &*&
@@ -889,12 +971,21 @@ int dchain_free_index(struct DoubleChain* chain, int index)
       case dchain(alist, index_range, low, high):
         switch(chi) {
           case dchaini(bare_alist, i_rng):
-            dchain_allocated_dchaini_allocated(bare_alist, tstamps, alist, index);
-            dchaini_alist_upperbound(cells, chi);
+            dchain_allocated_dchaini_allocated(bare_alist, tstamps, alist,
+  index); dchaini_alist_upperbound(cells, chi);
         }
     }
   @*/
-  return dchain_impl_free_index(chain->cells, index);
+  lock(&(chain->writeSwitch), &(chain->noReaders));
+  pthread_mutex_lock(&(chain->noWriters));
+
+  int freed = dchain_impl_free_index(chain->cells, index);
+  
+  pthread_mutex_unlock(&(chain->noWriters));
+  unlock(&(chain->writeSwitch), &(chain->noReaders));
+   
+
+  return freed;
   /*@
     if (dchain_allocated_fp(ch, index)) {
       remove_def(ch, chi, index);
@@ -1013,9 +1104,9 @@ int dchain_free_index(struct DoubleChain* chain, int index)
   @*/
 
 /*@
-  lemma void head_expired_is_mem(list<pair<int, vigor_time_t> > alist, vigor_time_t time)
-  requires get_expired_indexes_fp(time, alist) == cons(?eh,_);
-  ensures true == exists(alist, (same_index)(eh));
+  lemma void head_expired_is_mem(list<pair<int, vigor_time_t> > alist,
+  vigor_time_t time) requires get_expired_indexes_fp(time, alist) ==
+  cons(?eh,_); ensures true == exists(alist, (same_index)(eh));
   {
     list<pair<int, vigor_time_t> > exp = filter((is_cell_expired)(time), alist);
     mem_head_filter((is_cell_expired)(time), alist);
@@ -1063,10 +1154,9 @@ int dchain_free_index(struct DoubleChain* chain, int index)
     close double_chainp(ch, chain);
   }
 
-  lemma void expire_old_dchain_nonfull_maybe(struct DoubleChain* chain, dchain ch,
-                                             vigor_time_t time)
-  requires double_chainp(ch, chain);
-  ensures double_chainp(ch, chain) &*&
+  lemma void expire_old_dchain_nonfull_maybe(struct DoubleChain* chain, dchain
+  ch, vigor_time_t time) requires double_chainp(ch, chain); ensures
+  double_chainp(ch, chain) &*&
           (dchain_out_of_space_fp(dchain_expire_old_indexes_fp(ch, time)) ==
            false &&
            length(dchain_get_expired_indexes_fp(ch, time)) != 0) ==
@@ -1109,10 +1199,12 @@ int dchain_free_index(struct DoubleChain* chain, int index)
         note(fold_left(nil, remove_by_index_fp,
                        take(n, get_expired_indexes_fp(time, nil))) == nil);
 
-        note(take(n+1, get_expired_indexes_fp(time, cons(ah,nil))) == cons(fst(ah), nil));
+        note(take(n+1, get_expired_indexes_fp(time, cons(ah,nil))) ==
+  cons(fst(ah), nil));
 
         note(fold_left(cons(ah,nil), remove_by_index_fp,
-             take(n+1, get_expired_indexes_fp(time, cons(ah,nil)))) == remove_by_index_fp(cons(ah,nil), fst(ah)));
+             take(n+1, get_expired_indexes_fp(time, cons(ah,nil)))) ==
+  remove_by_index_fp(cons(ah,nil), fst(ah)));
         note(remove_by_index_fp(cons(ah,nil), fst(ah)) == nil);
 
         note(fold_left(cons(ah,nil), remove_by_index_fp,
@@ -1407,10 +1499,9 @@ int dchain_free_index(struct DoubleChain* chain, int index)
       case cons(h,t):
         if (snd(h) < time) {
           sorted_expired_idxes_is_the_first_part(t, time, snd(h), high);
-          cons_take_take_cons(h, t, length(get_expired_indexes_fp(time, alist))-1);
-        } else {
-          assert true == bnd_sorted_fp(map(snd, alist), snd(h), high);
-          all_new_no_expired_indexes(alist, time, snd(h), high);
+          cons_take_take_cons(h, t, length(get_expired_indexes_fp(time,
+  alist))-1); } else { assert true == bnd_sorted_fp(map(snd, alist), snd(h),
+  high); all_new_no_expired_indexes(alist, time, snd(h), high);
         }
     }
   }
@@ -1511,7 +1602,8 @@ int dchain_free_index(struct DoubleChain* chain, int index)
   requires true == bnd_sorted_fp(map(snd, alist), low, high);
   ensures length(get_expired_indexes_fp(time, alist)) == length(alist) ?
             true :
-            time <= snd(nth(length(get_expired_indexes_fp(time, alist)), alist));
+            time <= snd(nth(length(get_expired_indexes_fp(time, alist)),
+  alist));
   {
     switch(alist) {
       case nil: return;
@@ -1527,9 +1619,8 @@ int dchain_free_index(struct DoubleChain* chain, int index)
   @*/
 
 /*@
-  lemma void dchain_still_more_to_expire_impl(list<pair<int, vigor_time_t> > alist,
-                                              vigor_time_t time, int count,
-                                              vigor_time_t low, vigor_time_t high)
+  lemma void dchain_still_more_to_expire_impl(list<pair<int, vigor_time_t> >
+  alist, vigor_time_t time, int count, vigor_time_t low, vigor_time_t high)
   requires fold_left(alist, remove_by_index_fp,
                      take(count, get_expired_indexes_fp(time, alist))) ==
            cons(?ah,?at) &*&
@@ -1557,10 +1648,9 @@ int dchain_free_index(struct DoubleChain* chain, int index)
   @*/
 
 /*@
-  lemma void dchain_still_more_to_expire(dchain ch, vigor_time_t time, int count)
-  requires false == dchain_is_empty_fp(expire_n_indexes(ch, time, count)) &*&
-           dchain_get_oldest_time_fp(expire_n_indexes(ch, time, count)) <
-           time &*&
+  lemma void dchain_still_more_to_expire(dchain ch, vigor_time_t time, int
+  count) requires false == dchain_is_empty_fp(expire_n_indexes(ch, time, count))
+  &*& dchain_get_oldest_time_fp(expire_n_indexes(ch, time, count)) < time &*&
            dchain_is_sortedp(ch) &*&
            0 <= count;
   ensures count < length(dchain_get_expired_indexes_fp(ch, time)) &*&
@@ -1575,10 +1665,9 @@ int dchain_free_index(struct DoubleChain* chain, int index)
   @*/
 
 /*@
-  lemma void dchain_indexes_contain_idx_impl(list<pair<int, vigor_time_t> > alist,
-                                             int idx)
-  requires true;
-  ensures exists(alist, (same_index)(idx)) == mem(idx, map(fst, alist));
+  lemma void dchain_indexes_contain_idx_impl(list<pair<int, vigor_time_t> >
+  alist, int idx) requires true; ensures exists(alist, (same_index)(idx)) ==
+  mem(idx, map(fst, alist));
   {
     switch(alist) {
       case nil: return;
@@ -1786,11 +1875,9 @@ int dchain_free_index(struct DoubleChain* chain, int index)
 
 /*@
   lemma void dchain_rejuvenate_indexes_msubset
-               (list<pair<int, vigor_time_t> > alist, int index, vigor_time_t time)
-  requires true;
-  ensures true == msubset(map(fst, alist),
-                          map(fst, append(remove_by_index_fp(alist, index),
-                                          cons(pair(index, time), nil))));
+               (list<pair<int, vigor_time_t> > alist, int index, vigor_time_t
+time) requires true; ensures true == msubset(map(fst, alist), map(fst,
+append(remove_by_index_fp(alist, index), cons(pair(index, time), nil))));
   {
     remove_by_index_to_remove(alist, index);
     map_append(fst, remove_by_index_fp(alist, index),
@@ -1803,18 +1890,15 @@ int dchain_free_index(struct DoubleChain* chain, int index)
     assert true == msubset(map(fst, alist), map(fst, alist));
     msubset_push_to_the_end(map(fst, alist), map(fst, alist), index);
     assert true == msubset(map(fst, alist),
-                           append(remove(index, map(fst, alist)), cons(index, nil)));
-    subset_push_to_the_end(map(fst, alist),
-                           map(fst, alist),
-                           index);
+                           append(remove(index, map(fst, alist)), cons(index,
+nil))); subset_push_to_the_end(map(fst, alist), map(fst, alist), index);
   }
 
   lemma void dchain_rejuvenate_indexes_msuperset
-               (list<pair<int, vigor_time_t> > alist, int index, vigor_time_t time)
-  requires true == mem(index, map(fst, alist));
-  ensures true == msubset(map(fst, append(remove_by_index_fp(alist, index),
-                                          cons(pair(index, time), nil))),
-                          map(fst, alist));
+               (list<pair<int, vigor_time_t> > alist, int index, vigor_time_t
+time) requires true == mem(index, map(fst, alist)); ensures true ==
+msubset(map(fst, append(remove_by_index_fp(alist, index), cons(pair(index,
+time), nil))), map(fst, alist));
   {
     remove_by_index_to_remove(alist, index);
     map_append(fst, remove_by_index_fp(alist, index),
@@ -1844,13 +1928,12 @@ ensures true == set_eq(dchain_indexes_fp(ch),
                                                                time)));
   }
   multiset_eq_same_len(dchain_indexes_fp(ch),
-                       dchain_indexes_fp(dchain_rejuvenate_fp(ch, index, time)));
-  multiset_eq_set_eq(dchain_indexes_fp(ch),
+                       dchain_indexes_fp(dchain_rejuvenate_fp(ch, index,
+time))); multiset_eq_set_eq(dchain_indexes_fp(ch),
                      dchain_indexes_fp(dchain_rejuvenate_fp(ch, index, time)));
 }
 
 @*/
-
 
 /*@
   lemma void dchain_allocate_append_to_indexes_impl
@@ -1865,10 +1948,9 @@ ensures true == set_eq(dchain_indexes_fp(ch),
   @*/
 
 /*@
-  lemma void dchain_allocate_append_to_indexes(dchain ch, int ind, vigor_time_t time)
-  requires true;
-  ensures dchain_indexes_fp(dchain_allocate_fp(ch, ind, time)) ==
-          append(dchain_indexes_fp(ch), cons(ind, nil));
+  lemma void dchain_allocate_append_to_indexes(dchain ch, int ind, vigor_time_t
+  time) requires true; ensures dchain_indexes_fp(dchain_allocate_fp(ch, ind,
+  time)) == append(dchain_indexes_fp(ch), cons(ind, nil));
   {
     switch(ch) { case dchain(alist, ir, lo, hi):
       dchain_allocate_append_to_indexes_impl(alist, ind, time);

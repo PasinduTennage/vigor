@@ -54,13 +54,13 @@ bool flow_manager_allocate_flow(struct FlowManager *manager, struct FlowId *id,
   return true;
 }
 
-void flow_manager_expire(struct FlowManager *manager, vigor_time_t time) {
+int flow_manager_expire(struct FlowManager *manager, vigor_time_t time) {
   assert(time >= 0); // we don't support the past
   assert(sizeof(vigor_time_t) <= sizeof(uint64_t));
   uint64_t time_u = (uint64_t)time; // OK because of the two asserts
   vigor_time_t last_time =
-      time_u - manager->expiration_time * 1000; // convert us to ns
-  expire_items_single_map(manager->state->heap, manager->state->fv,
+      time_u - manager->expiration_time * 1000LL; // convert us to ns
+  return expire_items_single_map(manager->state->heap, manager->state->fv,
                           manager->state->fm, last_time); // deletes all the entries in the NAT table which have time stamp < last_time
 }
 

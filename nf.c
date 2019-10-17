@@ -2,6 +2,8 @@
 // DPDK uses these but doesn't include them. :|
 #include <linux/limits.h>
 #include <sys/types.h>
+#include <unistd.h>
+#include <stdio.h>
 
 #include <rte_common.h>
 #include <rte_eal.h>
@@ -166,10 +168,12 @@ static void lcore_main(void) {
   NF_INFO("Core %u forwarding packets.", rte_lcore_id());
 
   VIGOR_LOOP_BEGIN
+    
     struct rte_mbuf *mbuf;
     if (nf_receive_packet(VIGOR_DEVICE, &mbuf)) { //read a single packet and put it into mbuf
       uint8_t* packet = rte_pktmbuf_mtod(mbuf, uint8_t*); //A macro that points to the start of the data in the mbuf. The returned pointer is cast to type uint8_t
-      uint16_t dst_device = nf_process(mbuf->port, packet, mbuf->data_len, VIGOR_NOW);
+    uint16_t dst_device =
+        nf_process(mbuf->port, NULL, mbuf->data_len, VIGOR_NOW);
       nf_return_all_chunks(packet);
 
       if (dst_device == VIGOR_DEVICE) {
@@ -180,6 +184,10 @@ static void lcore_main(void) {
         concretize_devices(&dst_device, rte_eth_dev_count());
         nf_send_packet(mbuf, dst_device);
       }
+    }else{
+
+      nf_process(NULL, NULL, NULL, VIGOR_NOW);  
+
     }
   VIGOR_LOOP_END
 }

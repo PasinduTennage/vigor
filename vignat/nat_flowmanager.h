@@ -20,7 +20,7 @@ flow_manager_allocate(uint16_t starting_port, uint32_t nat_ip,
 bool flow_manager_allocate_flow(struct FlowManager *manager, struct FlowId *id,
                                 uint16_t internal_device, vigor_time_t time,
                                 uint16_t *external_port);
-void flow_manager_expire(struct FlowManager *manager, vigor_time_t time);
+int flow_manager_expire(struct FlowManager *manager, vigor_time_t time);
 bool flow_manager_get_internal(struct FlowManager *manager, struct FlowId *id,
                                vigor_time_t time, uint16_t *external_port);
 bool flow_manager_get_external(struct FlowManager *manager,
