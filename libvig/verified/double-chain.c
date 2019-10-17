@@ -181,7 +181,6 @@ int dchain_allocate(int index_range, struct DoubleChain **chain_out)
   }
   (*chain_out)->timestamps = timestamps_alloc;
 
-
   if (pthread_mutex_init(&((*chain_out)->readSwitch.lock), NULL) != 0 ||
       pthread_mutex_init(&((*chain_out)->writeSwitch.lock), NULL) != 0 ||
       pthread_mutex_init(&((*chain_out)->mutex), NULL) != 0 ||
@@ -849,13 +848,10 @@ int dchain_expire_one_index(struct DoubleChain *chain, int *index_out,
   //@ int size = dchain_index_range_fp(ch);
   //@ assert times(timestamps, size, ?tmstmps);
 
-  pthread_mutex_lock(&(chain->noReaders));
-  lock(&(chain->readSwitch), &(chain->noWriters));
-  pthread_mutex_unlock(&(chain->noReaders));
+  lock(&(chain->writeSwitch), &(chain->noReaders));
+  pthread_mutex_lock(&(chain->noWriters));
 
   int has_ind = dchain_impl_get_oldest_index(chain->cells, index_out);
-
-  unlock(&(chain->readSwitch), &(chain->noWriters));
 
   //@ is_empty_def(ch, chi);
   //@ insync_both_empty(dchaini_alist_fp(chi), tmstmps, dchain_alist_fp(ch));
@@ -870,8 +866,6 @@ int dchain_expire_one_index(struct DoubleChain *chain, int *index_out,
     if (chain->timestamps[*index_out] < time) {
       //@ glue_timestamp(timestamps, tmstmps, oi);
       //@ assert nth(oi, tmstmps) == dchain_get_oldest_time_fp(ch);
-      lock(&(chain->writeSwitch), &(chain->noReaders));
-      pthread_mutex_lock(&(chain->noWriters));
 
       int rez = dchain_impl_free_index(chain->cells, *index_out);
 
@@ -893,6 +887,9 @@ int dchain_expire_one_index(struct DoubleChain *chain, int *index_out,
     }
     //@ glue_timestamp(timestamps, tmstmps, oi);
   }
+  pthread_mutex_unlock(&(chain->noWriters));
+  unlock(&(chain->writeSwitch), &(chain->noReaders));
+
   //@ close double_chainp(ch, chain);
   return 0;
 }
@@ -942,11 +939,11 @@ int dchain_is_index_allocated(struct DoubleChain *chain, int index)
   lock(&(chain->readSwitch), &(chain->noWriters));
 
   pthread_mutex_unlock(&(chain->noReaders));
-  
+
   int allocated = dchain_impl_is_index_allocated(chain->cells, index);
-  
+
   unlock(&(chain->readSwitch), &(chain->noWriters));
-  
+
   return allocated;
   //@ close double_chainp(ch, chain);
 }
@@ -980,10 +977,9 @@ int dchain_free_index(struct DoubleChain *chain, int index)
   pthread_mutex_lock(&(chain->noWriters));
 
   int freed = dchain_impl_free_index(chain->cells, index);
-  
+
   pthread_mutex_unlock(&(chain->noWriters));
   unlock(&(chain->writeSwitch), &(chain->noReaders));
-   
 
   return freed;
   /*@
