@@ -18,6 +18,8 @@
 #include "nf-util.h"
 #include "nf.h"
 
+#include <pthread.h>
+
 #ifdef KLEE_VERIFICATION
 #  include "libvig/models/hardware.h"
 #  include "libvig/models/verified/vigor-time-control.h"
@@ -152,6 +154,30 @@ static int nf_init_device(uint16_t device, struct rte_mempool *mbuf_pool) {
 
 // --- Per-core work ---
 
+void *worker(void *arg) {
+  int a = *((int *)arg);
+  int i = 0;
+  while (1) {
+    vigor_time_t VIGOR_NOW = current_time();
+    i++;
+
+    a = (a + 1) * 1000;
+    nf_process(NULL, NULL, NULL, VIGOR_NOW, a);
+    if (i == 1000) {
+      printf("Fuck it ran to completion");
+      exit(0);
+    }
+    return NULL;
+  }
+}
+
+void *expirator(void *arg) {
+  while (1) {
+    nf_expire(current_time());
+    return NULL;
+  }
+}
+
 static void lcore_main(void) {
   for (uint16_t device = 0; device < rte_eth_dev_count(); device++) {
     if (rte_eth_dev_socket_id(device) > 0 &&
@@ -165,35 +191,57 @@ static void lcore_main(void) {
     rte_exit(EXIT_FAILURE, "Error initializing NF");
   }
 
-  NF_INFO("Core %u forwarding packets.", rte_lcore_id());
+  // NF_INFO("Core %u forwarding packets.", rte_lcore_id());
+  // int i = 0;
+  // VIGOR_LOOP_BEGIN
+  //   i++;
+  //   if (i == 1000) {
+  //     printf("Fuck it ran to completion");
+  //     exit(0);
+  //   }
+  //   struct rte_mbuf *mbuf;
+  //   if (nf_receive_packet(VIGOR_DEVICE, &mbuf)) { // read a single packet and
+  //                                                 // put it into mbuf
+  //     uint8_t *packet = rte_pktmbuf_mtod(
+  //         mbuf,
+  //         uint8_t *); // A macro that points to the start of the data in the
+  //                     // mbuf. The returned pointer is cast to type uint8_t
+  //     uint16_t dst_device =
+  //         nf_process(mbuf->port, NULL, mbuf->data_len, VIGOR_NOW);
+  //     nf_return_all_chunks(packet);
+
+  //     if (dst_device == VIGOR_DEVICE) {
+  //       nf_free_packet(mbuf);
+  //     } else if (dst_device == FLOOD_FRAME) {
+  //       flood(mbuf, VIGOR_DEVICE, VIGOR_DEVICES_COUNT);
+  //     } else {
+  //       concretize_devices(&dst_device, rte_eth_dev_count());
+  //       nf_send_packet(mbuf, dst_device);
+  //     }
+  //   } else {
+
+  //     nf_process(NULL, NULL, NULL, VIGOR_NOW);
+  //   }
+  // VIGOR_LOOP_END
+
+  pthread_t expirators;
+  int err = pthread_create(&(expirators), NULL, &expirator, 0);
+  pthread_join(expirators, NULL);
+
+  pthread_t workers[10];
   int i = 0;
-  VIGOR_LOOP_BEGIN
+  while (i < 10) {
+    int err = pthread_create(&(workers[i]), NULL, &worker, i);
+    if (err != 0)
+      printf("\ncan't create thread :[%s]", strerror(err));
     i++;
-    if(i==1000){
-      printf("Fuck it ran to completion");
-      exit(0);
-    }
-    struct rte_mbuf *mbuf;
-    if (nf_receive_packet(VIGOR_DEVICE, &mbuf)) { //read a single packet and put it into mbuf
-      uint8_t* packet = rte_pktmbuf_mtod(mbuf, uint8_t*); //A macro that points to the start of the data in the mbuf. The returned pointer is cast to type uint8_t
-    uint16_t dst_device =
-        nf_process(mbuf->port, NULL, mbuf->data_len, VIGOR_NOW);
-      nf_return_all_chunks(packet);
-
-      if (dst_device == VIGOR_DEVICE) {
-        nf_free_packet(mbuf);
-      } else if (dst_device == FLOOD_FRAME) {
-        flood(mbuf, VIGOR_DEVICE, VIGOR_DEVICES_COUNT);
-      } else {
-        concretize_devices(&dst_device, rte_eth_dev_count());
-        nf_send_packet(mbuf, dst_device);
-      }
-    }else{
-
-      nf_process(NULL, NULL, NULL, VIGOR_NOW);  
-
-    }
-  VIGOR_LOOP_END
+  }
+  i = 0;
+  
+  while (i<10) {
+    pthread_join(workers[i], NULL);
+    i++;
+  }
 }
 
 // --- Main ---

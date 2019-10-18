@@ -24,14 +24,24 @@ uint16_t get_random_int(uint16_t lower_bound, uint16_t upper_bound) {
   return rand() % (upper_bound - lower_bound);
 }
 
+// int count = flow_manager_expire(flow_manager, now); // should run in another thread as garbafe collection
+
+int nf_expire(vigor_time_t now){
+  // write lock
+  return flow_manager_expire(flow_manager, now); // should run in another thread as garbafe collection
+}
+
 int nf_process(uint16_t device, uint8_t *buffer, uint16_t buffer_length,
-               vigor_time_t now) {
+               vigor_time_t now, int a) {
+
+                 // read lock
   device = get_random_int(0, 2);
   // generate a flow
-  struct FlowId id = { .src_port = get_random_int(0, 10),
-                       .dst_port = get_random_int(0, 10),
-                       .src_ip = get_random_int(0, 10),
-                       .dst_ip = get_random_int(0, 10),
+  
+  struct FlowId id = { .src_port = get_random_int(a-11, a-1),
+                       .dst_port = get_random_int(a-11, a-1),
+                       .src_ip = get_random_int(a-11, a-1),
+                       .dst_ip = get_random_int(a-11, a-1),
                        .protocol = 3,
                        .internal_device = 0};
 
