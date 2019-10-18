@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <stddef.h>
 #include "map.h"
+#include "map-impl.h"
 
 #ifdef CAPACITY_POW2
 #  include "map-impl-pow2.h"

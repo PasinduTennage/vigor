@@ -527,7 +527,7 @@ int dmap_get_a/*@ <K1,K2,V> @*/(struct DoubleMap* map, void* key, int* index)
   int rez = map_impl_get(map->bbs_a, map->kps_a, map->khs_a, map->chns_a,
                          map->inds_a, key,
                          map->eq_a, hash, index,
-                         map->keys_capacity);
+                         map->keys_capacity, NULL);
   /*@ close dmappingp(m, kp1, kp2, hsh1, hsh2,
                       fvp, bvp, rof, vsz, vk1, vk2, rp1, rp2, map); @*/
   return rez;
@@ -572,7 +572,7 @@ int dmap_get_b/*@ <K1,K2,V> @*/(struct DoubleMap* map, void* key, int* index)
   return map_impl_get(map->bbs_b, map->kps_b, map->khs_b, map->chns_b,
                       map->inds_b, key,
                       map->eq_b, hash, index,
-                      map->keys_capacity);
+                      map->keys_capacity, NULL);
   //@ open hide_mapping(_, _, _, _, _, _, _, _, _, _, _);
   /*@ close dmappingp(m, kp1, kp2, hsh1, hsh2,
                       fvp, bvp, rof, vsz, vk1, vk2, rp1, rp2, map); @*/
@@ -1159,7 +1159,7 @@ int dmap_put/*@ <K1,K2,V> @*/(struct DoubleMap* map, void* value, int index)
   map_impl_put(map->bbs_a, map->kps_a, map->khs_a, map->chns_a,
                map->inds_a, key_a,
                hash1,
-               index, map->keys_capacity);
+               index, map->keys_capacity, NULL, NULL);
 
   //@ assert [?x1]is_map_key_hash(hsh_a, kp1, hsh1);
   //@ close [x1]hide_map_key_hash(map->hsh_a, kp1, hsh1);
@@ -1177,7 +1177,7 @@ int dmap_put/*@ <K1,K2,V> @*/(struct DoubleMap* map, void* value, int index)
   map_impl_put(map->bbs_b, map->kps_b, map->khs_b, map->chns_b,
                map->inds_b, key_b,
                hash2,
-               index, map->keys_capacity);
+               index, map->keys_capacity, NULL, NULL);
   /*@ open hide_mapping(_, _, kp1, rp1, hsh1, keys_cap, bbs1, kps1,
                         khs1, chns1, vals1);
     @*/
@@ -1658,7 +1658,7 @@ int dmap_erase/*@ <K1,K2,V> @*/(struct DoubleMap* map, int index)
   //@ insync_has(vals, m1, m2, vk1, vk2, index, cap);
   map_impl_erase(map->bbs_a, map->kps_a, map->khs_a, map->chns_a, key_a,
                  map->eq_a, hash1,
-                 map->keys_capacity, &out_key_a);
+                 map->keys_capacity, &out_key_a, NULL, NULL);
   //@ assert [?x1]is_map_key_hash(hsh_a, kp1, hsh1);
   //@ close [x1]hide_map_key_hash(map->hsh_a, kp1, hsh1);
   //@ assert [?x2]is_map_key_hash(hsh_a, kp1, hsh1);
@@ -1674,7 +1674,7 @@ int dmap_erase/*@ <K1,K2,V> @*/(struct DoubleMap* map, int index)
     @*/
   map_impl_erase(map->bbs_b, map->kps_b, map->khs_b, map->chns_b, key_b,
                  map->eq_b, hash2,
-                 map->keys_capacity, &out_key_b);
+                 map->keys_capacity, &out_key_b, NULL, NULL);
   /*@ open hide_mapping(_, _, kp1, rp1, hsh1, keys_cap,
                         bbs1, kps1, khs1, chns1, vals1);
     @*/

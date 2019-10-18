@@ -1836,6 +1836,7 @@ int map_impl_get/*@ <kt> @*/(int* busybits, void** keyps,
                              void* keyp, map_keys_equality* eq,
                              unsigned hash, int* value,
                              unsigned capacity)
+
 /*@ requires mapping<kt>(?m, ?addrs, ?kp, ?recp, ?hsh, capacity, busybits,
                          keyps, k_hashes, chns, values) &*&
              [?fk]kp(keyp, ?k) &*&
@@ -1858,7 +1859,7 @@ int map_impl_get/*@ <kt> @*/(int* busybits, void** keyps,
   //@ open mapping(m, addrs, kp, recp, hsh, capacity, busybits, keyps, k_hashes, chns, values);
   //@ open hmapping(kp, hsh, capacity, busybits, ?kps, k_hashes, ?hm);
   //@ close hmapping(kp, hsh, capacity, busybits, kps, k_hashes, hm);
-  int index = find_key(busybits, keyps, k_hashes, chns,
+  int index = find_key(busybits, keyps, k_hashes, chns,   
                        keyp, eq, hash, capacity);
   //@ hmap_exists_iff_map_has(hm, m, k);
   if (-1 == index)
@@ -1874,7 +1875,10 @@ int map_impl_get/*@ <kt> @*/(int* busybits, void** keyps,
   //@ map_extract_recp(m, k, recp);
   //@ close mapping(m, addrs, kp, recp, hsh, capacity, busybits, keyps, k_hashes, chns, values);
   return 1;
+
+  
 }
+
 
 
 /*@

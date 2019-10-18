@@ -1944,7 +1944,7 @@ int map_impl_get/*@ <kt> @*/(int* busybits, void** keyps,
         //@ assert true == up_to(nat_of_int(i), (byLoopNthProp)(ks, (neq)(some(k)), capacity, start));
         //@ assert true == up_to(nat_of_int(i), (byLoopNthProp)(ks, (neq)(some(k)), capacity, loop_fp(hsh(k), capacity)));
         //@ assert true == up_to(succ(nat_of_int(i)), (byLoopNthProp)(ks, (neq)(some(k)), capacity, loop_fp(hsh(k), capacity)));
-        //@ assert true == up_to(nat_of_int(i+1), (byLoopNthProp)(ks, (neq)(some(k)), capacity, loop_fp(hsh(k), capacity)));
+        //@ assert true == up_to(nat_of_int(i+1), (byLoopNthProp)(ks, (neq)(sommake rune(k)), capacity, loop_fp(hsh(k), capacity)));
         //@ assert buckets != nil;
         //@ chains_depleted_no_hope(buckets, i, loop_fp(hsh(k), capacity), k, capacity, hsh);
         //@ assert false == hmap_exists_key_fp(hm, k);

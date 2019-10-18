@@ -166,9 +166,13 @@ static void lcore_main(void) {
   }
 
   NF_INFO("Core %u forwarding packets.", rte_lcore_id());
-
+  int i = 0;
   VIGOR_LOOP_BEGIN
-    
+    i++;
+    if(i==1000){
+      printf("Fuck it ran to completion");
+      exit(0);
+    }
     struct rte_mbuf *mbuf;
     if (nf_receive_packet(VIGOR_DEVICE, &mbuf)) { //read a single packet and put it into mbuf
       uint8_t* packet = rte_pktmbuf_mtod(mbuf, uint8_t*); //A macro that points to the start of the data in the mbuf. The returned pointer is cast to type uint8_t
