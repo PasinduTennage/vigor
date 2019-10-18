@@ -2,6 +2,7 @@
 #define _MAP_H_INCLUDED_
 
 #include "map-util.h"
+#include <pthread.h>
 
 //@ #include "map.gh"
 
@@ -82,7 +83,7 @@ void map_erase/*@ <t> @*/(struct Map* map, void* key, void** trash);
             length(map_erase_fp(contents, k)) + 1 == length(contents) &*&
             [0.25]kp(k_out, k); @*/
 
-unsigned map_size/*@ <t> @*/(struct Map* map);
+// unsigned map_size/*@ <t> @*/(struct Map* map);
 /*@ requires mapp<t>(map, ?kp, ?hsh, ?recp,
                      mapc(?capacity, ?contents, ?addrs)); @*/
 /*@ ensures mapp<t>(map, kp, hsh, recp,

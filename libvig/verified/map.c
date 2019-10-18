@@ -1,23 +1,25 @@
+#include <pthread.h>
 #include <stdlib.h>
 #include <stddef.h>
 #include "map.h"
 
 #ifdef CAPACITY_POW2
-#include "map-impl-pow2.h"
+#  include "map-impl-pow2.h"
 #else
-#include "map-impl.h"
+#  include "map-impl.h"
 #endif
 
 struct Map {
-  int* busybits;
-  void** keyps;
-  unsigned* khs;
-  int* chns;
-  int* vals;
+  int *busybits;
+  void **keyps;
+  unsigned *khs;
+  int *chns;
+  int *vals;
   unsigned capacity;
-  unsigned size;
-  map_keys_equality* keys_eq;
-  map_key_hash* khash;
+  unsigned *size;
+  map_keys_equality *keys_eq;
+  map_key_hash *khash;
+  pthread_mutex_t *mutexes;
 };
 
 /*@
@@ -53,9 +55,8 @@ struct Map {
     ;
 @*/
 
-int map_allocate/*@ <t> @*/(map_keys_equality* keq, map_key_hash* khash,
-                            unsigned capacity,
-                            struct Map** map_out)
+int map_allocate /*@ <t> @*/ (map_keys_equality *keq, map_key_hash *khash,
+                              unsigned capacity, struct Map **map_out)
 /*@ requires 0 < capacity &*& capacity < CAPACITY_UPPER_LIMIT &*&
              [_]is_map_keys_equality<t>(keq, ?kp) &*&
              [_]is_map_key_hash<t>(khash, kp, ?hsh) &*&
@@ -68,27 +69,28 @@ int map_allocate/*@ <t> @*/(map_keys_equality* keq, map_key_hash* khash,
                        mapc(capacity, nil, nil))); @*/
 {
 
-  #ifdef CAPACITY_POW2
+#ifdef CAPACITY_POW2
   // Check that capacity is a power of 2
   if (capacity == 0 || (capacity & (capacity - 1)) != 0) {
-      return 0;
+    return 0;
   }
-  //@ check_pow2_valid(capacity);
-  #else
-  #endif
+//@ check_pow2_valid(capacity);
+#else
+#endif
 
-  struct Map* old_map_val = *map_out;
-  struct Map* map_alloc = (struct Map*) malloc(sizeof(struct Map));
-  if (map_alloc == NULL) return 0;
-  *map_out = (struct Map*) map_alloc;
-  int* bbs_alloc = (int*) malloc(sizeof(int)*(int)capacity);
+  struct Map *old_map_val = *map_out;
+  struct Map *map_alloc = (struct Map *)malloc(sizeof(struct Map));
+  if (map_alloc == NULL)
+    return 0;
+  *map_out = (struct Map *)map_alloc;
+  int *bbs_alloc = (int *)malloc(sizeof(int) * (int)capacity);
   if (bbs_alloc == NULL) {
     free(map_alloc);
     *map_out = old_map_val;
     return 0;
   }
   (*map_out)->busybits = bbs_alloc;
-  void** keyps_alloc = (void**) malloc(sizeof(void*)*(int)capacity);
+  void **keyps_alloc = (void **)malloc(sizeof(void *) * (int)capacity);
   if (keyps_alloc == NULL) {
     free(bbs_alloc);
     free(map_alloc);
@@ -96,7 +98,7 @@ int map_allocate/*@ <t> @*/(map_keys_equality* keq, map_key_hash* khash,
     return 0;
   }
   (*map_out)->keyps = keyps_alloc;
-  unsigned* khs_alloc = (unsigned*) malloc(sizeof(unsigned)*(int)capacity);
+  unsigned *khs_alloc = (unsigned *)malloc(sizeof(unsigned) * (int)capacity);
   if (khs_alloc == NULL) {
     free(keyps_alloc);
     free(bbs_alloc);
@@ -105,7 +107,7 @@ int map_allocate/*@ <t> @*/(map_keys_equality* keq, map_key_hash* khash,
     return 0;
   }
   (*map_out)->khs = khs_alloc;
-  int* chns_alloc = (int*) malloc(sizeof(int)*(int)capacity);
+  int *chns_alloc = (int *)malloc(sizeof(int) * (int)capacity);
   if (chns_alloc == NULL) {
     free(khs_alloc);
     free(keyps_alloc);
@@ -115,7 +117,7 @@ int map_allocate/*@ <t> @*/(map_keys_equality* keq, map_key_hash* khash,
     return 0;
   }
   (*map_out)->chns = chns_alloc;
-  int* vals_alloc = (int*) malloc(sizeof(int)*(int)capacity);
+  int *vals_alloc = (int *)malloc(sizeof(int) * (int)capacity);
   if (vals_alloc == NULL) {
     free(chns_alloc);
     free(khs_alloc);
@@ -127,26 +129,34 @@ int map_allocate/*@ <t> @*/(map_keys_equality* keq, map_key_hash* khash,
   }
   (*map_out)->vals = vals_alloc;
   (*map_out)->capacity = capacity;
-  (*map_out)->size = 0;
+  (*map_out)->size = (unsigned *)malloc(sizeof(unsigned) * NUM_MUTEX);
+  int i = 0; 
+  for (i = 0; i< NUM_MUTEX; i++) {
+    (*map_out)->size[i] = 0;
+  }
   (*map_out)->keys_eq = keq;
   (*map_out)->khash = khash;
   //@ close map_key_type<t>();
   //@ close map_key_hash<t>(hsh);
   //@ close map_record_property<t>(nop_true);
-  map_impl_init((*map_out)->busybits,
-                keq,
-                (*map_out)->keyps,
-                (*map_out)->khs,
-                (*map_out)->chns,
-                (*map_out)->vals,
-                capacity);
+  map_impl_init((*map_out)->busybits, keq, (*map_out)->keyps, (*map_out)->khs,
+                (*map_out)->chns, (*map_out)->vals, capacity);
+
+  (*map_out)->mutexes = malloc(sizeof(pthread_mutex_t) * NUM_MUTEX);
+
+  for (i = 0; i< NUM_MUTEX; i++) {
+    if (pthread_mutex_init(((*map_out)->mutexes+i), NULL) != 0){
+        printf("\n mutex init failed\n");
+      return 0;
+    }
+  }
   /*@
     close mapp<t>(*map_out, kp, hsh, nop_true, mapc(capacity, nil, nil));
     @*/
   return 1;
 }
 
-int map_get/*@ <t> @*/(struct Map* map, void* key, int* value_out)
+int map_get /*@ <t> @*/ (struct Map *map, void *key, int *value_out)
 /*@ requires mapp<t>(map, ?kp, ?hsh, ?recp,
                      mapc(?capacity, ?contents, ?addrs)) &*&
              kp(key, ?k) &*&
@@ -162,22 +172,14 @@ int map_get/*@ <t> @*/(struct Map* map, void* key, int* value_out)
                *value_out |-> old_v); @*/
 {
   //@ open mapp<t>(map, kp, hsh, recp, mapc(capacity, contents, addrs));
-  map_key_hash* khash = map->khash;
+  map_key_hash *khash = map->khash;
   unsigned hash = khash(key);
-  return map_impl_get(map->busybits,
-                      map->keyps,
-                      map->khs,
-                      map->chns,
-                      map->vals,
-                      key,
-                      map->keys_eq,
-                      hash,
-                      value_out,
-                      map->capacity);
+  return map_impl_get(map->busybits, map->keyps, map->khs, map->chns, map->vals,
+                      key, map->keys_eq, hash, value_out, map->capacity, map->mutexes);
   //@ close mapp<t>(map, kp, hsh, recp, mapc(capacity, contents, addrs));
 }
 
-void map_put/*@ <t> @*/(struct Map* map, void* key, int value)
+void map_put /*@ <t> @*/ (struct Map *map, void *key, int value)
 /*@ requires mapp<t>(map, ?kp, ?hsh, ?recp,
                      mapc(?capacity, ?contents, ?addrs)) &*&
              [0.25]kp(key, ?k) &*&
@@ -189,16 +191,11 @@ void map_put/*@ <t> @*/(struct Map* map, void* key, int value)
                          map_put_fp(addrs, k, key))); @*/
 {
   //@ open mapp<t>(map, kp, hsh, recp, mapc(capacity, contents, addrs));
-  map_key_hash* khash = map->khash;
+  map_key_hash *khash = map->khash;
   unsigned hash = khash(key);
-  map_impl_put(map->busybits,
-               map->keyps,
-               map->khs,
-               map->chns,
-               map->vals,
-               key, hash, value,
-               map->capacity);
-  ++map->size;
+  map_impl_put(map->busybits, map->keyps, map->khs, map->chns, map->vals, key,
+               hash, value, map->capacity,map->mutexes, map->size);
+  // ++map->size;
   /*@ close mapp<t>(map, kp, hsh, recp, mapc(capacity,
                                              map_put_fp(contents, k, value),
                                              map_put_fp(addrs, k, key)));
@@ -235,7 +232,7 @@ void map_put/*@ <t> @*/(struct Map* map, void* key, int value)
   }
   @*/
 
-void map_erase/*@ <t> @*/(struct Map* map, void* key, void** trash)
+void map_erase /*@ <t> @*/ (struct Map *map, void *key, void **trash)
 /*@ requires mapp<t>(map, ?kp, ?hsh, ?recp,
                      mapc(?capacity, ?contents, ?addrs)) &*&
              [?fk]kp(key, ?k) &*&
@@ -252,19 +249,12 @@ void map_erase/*@ <t> @*/(struct Map* map, void* key, void** trash)
             [0.25]kp(k_out, k); @*/
 {
   //@ open mapp<t>(map, kp, hsh, recp, mapc(capacity, contents, addrs));
-  map_key_hash* khash = map->khash;
+  map_key_hash *khash = map->khash;
   unsigned hash = khash(key);
-  map_impl_erase(map->busybits,
-                 map->keyps,
-                 map->khs,
-                 map->chns,
-                 key,
-                 map->keys_eq,
-                 hash,
-                 map->capacity,
-                 trash);
+  map_impl_erase(map->busybits, map->keyps, map->khs, map->chns, key,
+                 map->keys_eq, hash, map->capacity, trash, map->mutexes, map->size);
   //@ map_erase_decrement_len(contents, k);
-  --map->size;
+  // --map->size;
   /*@
     close mapp<t>(map, kp, hsh, recp, mapc(capacity,
                                            map_erase_fp(contents, k),
@@ -272,23 +262,22 @@ void map_erase/*@ <t> @*/(struct Map* map, void* key, void** trash)
     @*/
 }
 
-unsigned map_size/*@ <t> @*/(struct Map* map)
-/*@ requires mapp<t>(map, ?kp, ?hsh, ?recp,
-                     mapc(?capacity, ?contents, ?addrs)); @*/
-/*@ ensures mapp<t>(map, kp, hsh, recp,
-                    mapc(capacity, contents, addrs)) &*&
-            result == length(contents); @*/
-{
-  //@ open mapp<t>(map, kp, hsh, recp, mapc(capacity, contents, addrs));
-  return map->size;
-  //@ close mapp<t>(map, kp, hsh, recp, mapc(capacity, contents, addrs));
-}
+// unsigned map_size /*@ <t> @*/ (struct Map *map)
+// /*@ requires mapp<t>(map, ?kp, ?hsh, ?recp,
+//                      mapc(?capacity, ?contents, ?addrs)); @*/
+// /*@ ensures mapp<t>(map, kp, hsh, recp,
+//                     mapc(capacity, contents, addrs)) &*&
+//             result == length(contents); @*/
+// {
+//   //@ open mapp<t>(map, kp, hsh, recp, mapc(capacity, contents, addrs));
+//   return map->size;
+//   //@ close mapp<t>(map, kp, hsh, recp, mapc(capacity, contents, addrs));
+// }
 
 /*@
 
-  lemma void map_has_two_values_nondistinct<kt,vt>(list<pair<kt,vt> > m, kt k1, kt k2)
-  requires true == map_has_fp(m, k1) &*&
-          true == map_has_fp(m, k2) &*&
+  lemma void map_has_two_values_nondistinct<kt,vt>(list<pair<kt,vt> > m, kt k1,
+kt k2) requires true == map_has_fp(m, k1) &*& true == map_has_fp(m, k2) &*&
           map_get_fp(m, k1) == map_get_fp(m, k2) &*&
           k1 != k2;
   ensures false == distinct(map(snd, m));

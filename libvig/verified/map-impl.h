@@ -1,7 +1,9 @@
 #ifndef _MAP_IMPL_H_INCLUDED_
 #define _MAP_IMPL_H_INCLUDED_
+#define NUM_MUTEX 10
 
 #include <stdbool.h>
+#include <pthread.h>
 #include "map-util.h"
 
 //@ #include "map.gh"
@@ -83,7 +85,7 @@ int map_impl_get/*@ <kt> @*/(int* busybits, void** keyps,
                              int* values,
                              void* keyp, map_keys_equality* eq,
                              unsigned hash, int* value,
-                             unsigned capacity);
+                             unsigned capacity, pthread_mutex_t *mutexes);
 /*@ requires mapping<kt>(?m, ?addrs, ?kp, ?recp, ?hsh, capacity, busybits,
                          keyps, k_hashes, chns, values) &*&
              [?fk]kp(keyp, ?k) &*&
@@ -106,7 +108,7 @@ void map_impl_put/*@ <kt> @*/(int* busybits, void** keyps,
                               unsigned* k_hashes, int* chns,
                               int* values,
                               void* keyp, unsigned hash, int value,
-                              unsigned capacity);
+                              unsigned capacity, pthread_mutex_t *mutexes, unsigned *size);
 /*@ requires mapping<kt>(?m, ?addrs, ?kp, ?recp, ?hsh, capacity, busybits,
                          keyps, k_hashes, chns, values) &*&
              [0.25]kp(keyp, ?k) &*& true == recp(k, value) &*&
@@ -127,7 +129,7 @@ void map_impl_erase/*@ <kt> @*/(int* busybits, void** keyps, unsigned* key_hashe
                                 int* chns,
                                 void* keyp, map_keys_equality* eq, unsigned hash,
                                 unsigned capacity,
-                                void** keyp_out);
+                                void** keyp_out, pthread_mutex_t *mutexes, unsigned *size);
 /*@ requires mapping<kt>(?m, ?addrs, ?kp, ?recp, ?hsh, capacity, busybits,
                          keyps, key_hashes, chns, ?values) &*&
              [?fk]kp(keyp, ?k) &*&

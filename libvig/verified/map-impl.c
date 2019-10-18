@@ -1,6 +1,7 @@
 #ifndef CAPACITY_POW2
 #include "map-impl.h"
 #include <stdint.h>
+#include <pthread.h>
 
 //@ #include <list.gh>
 //@ #include <listex.gh>
@@ -801,7 +802,7 @@ unsigned find_key_remove_chain/*@ <kt> @*/(int* busybits, void** keyps,
                                            void* keyp, map_keys_equality* eq,
                                            unsigned key_hash,
                                            unsigned capacity,
-                                           void** keyp_out)
+                                           void** keyp_out, pthread_mutex_t *mutexes, unsigned *size)
 /*@ requires hmapping<kt>(?kpr, ?hsh, capacity, busybits, ?kps, k_hashes, ?hm) &*&
              buckets_ks_insync(chns, capacity, ?buckets, hsh, hmap_ks_fp(hm)) &*&
              pointers(keyps, capacity, kps) &*&
@@ -866,6 +867,12 @@ unsigned find_key_remove_chain/*@ <kt> @*/(int* busybits, void** keyps,
   {
     //@ pred_mapping_same_len(bbs, ks);
     unsigned index = loop(start + i, capacity);
+    int mutex_num = (index - (index%(capacity/NUM_MUTEX)))/((capacity/NUM_MUTEX));
+    if(mutex_num>=NUM_MUTEX){
+      mutex_num = NUM_MUTEX - 1;
+    }
+    pthread_mutex_lock(mutexes+mutex_num);
+    
     int bb = busybits[index];
     unsigned kh = k_hashes[index];
     int chn = chns[index];
@@ -881,6 +888,8 @@ unsigned find_key_remove_chain/*@ <kt> @*/(int* busybits, void** keyps,
         //@ hmap_find_this_key(hm, index, k);
         busybits[index] = 0;
         *keyp_out = keyps[index];
+        size[mutex_num]--;
+        pthread_mutex_unlock(mutexes+mutex_num);
         //@ hmap_rem_preserves_no_dups(ks, index);
         //@ hmap_rem_preserves_hash_list(ks, khs, hsh, index);
         //@ pred_mapping_drop_key(kps, bbs, ks, index);
@@ -920,6 +929,7 @@ unsigned find_key_remove_chain/*@ <kt> @*/(int* busybits, void** keyps,
     //@ assert 0 < chn;
     //@ integer_limits(&chn);
     chns[index] = chn - 1;
+    pthread_mutex_unlock(mutexes+mutex_num);
     //@ assert(nth(index, ks) != some(k));
     //@ assert(true == neq(some(k), nth(index, ks)));
     //@ assert(true == neq(some(k), nth(loop_fp(i+start,capacity), ks)));
@@ -1841,9 +1851,10 @@ int map_impl_get/*@ <kt> @*/(int* busybits, void** keyps,
                              int* values,
                              void* keyp, map_keys_equality* eq,
                              unsigned hash, int* value,
-                             unsigned capacity)
+                             unsigned capacity, pthread_mutex_t *mutexes)
 /*@ requires mapping<kt>(?m, ?addrs, ?kp, ?recp, ?hsh, capacity, busybits,
                          keyps, k_hashes, chns, values) &*&
+
              [?fk]kp(keyp, ?k) &*&
              [?fr]is_map_keys_equality(eq, kp) &*&
              hsh(k) == hash &*&
@@ -1863,22 +1874,101 @@ int map_impl_get/*@ <kt> @*/(int* busybits, void** keyps,
   //@ open mapping(m, addrs, kp, recp, hsh, capacity, busybits, keyps, k_hashes, chns, values);
   //@ open hmapping(kp, hsh, capacity, busybits, ?kps, k_hashes, ?hm);
   //@ close hmapping(kp, hsh, capacity, busybits, kps, k_hashes, hm);
-  int index = find_key(busybits, keyps, k_hashes, chns,
-                       keyp, eq, hash, capacity);
-  //@ hmap_exists_iff_map_has(hm, m, k);
-  if (-1 == index)
+  // int out_index = find_key(busybits, keyps, k_hashes, chns,
+  //                      keyp, eq, hash, capacity);
+
+  int out_index = -1;
+
+  unsigned start = loop(hash, capacity);
+  unsigned i = 0;
+  for (; i < capacity; ++i)
+    /*@ invariant pred_mapping(kps, bbs, kpr, ks) &*&
+                  ints(busybits, capacity, bbs) &*&
+                  uints(k_hashes, capacity, khs) &*&
+                  ints(chns, capacity, chnlist) &*&
+                  pointers(keyps, capacity, kps) &*&
+                  0 <= i &*& i <= capacity &*&
+                  [f]is_map_keys_equality<kt>(eq, kpr) &*&
+                  [kfr]kpr(keyp, k) &*&
+                  hsh(k) == key_hash &*&
+                  true == hash_list(ks, khs, hsh) &*&
+                  start == loop_fp(hsh(k), capacity) &*&
+                  ks == buckets_get_keys_fp(buckets) &*&
+                  buckets != nil &*&
+                  true == up_to(nat_of_int(i),
+                                (byLoopNthProp)(ks, (neq)(some(k)),
+                                                capacity, start));
+    @*/
+    //@ decreases capacity - i;
   {
-    //@ close mapping(m, addrs, kp, recp, hsh, capacity, busybits, keyps, k_hashes, chns, values);
-    return 0;
+    //@ pred_mapping_same_len(bbs, ks);
+    unsigned index = loop(start + i, capacity);
+    int mutex_num = (index - (index%(capacity/NUM_MUTEX)))/((capacity/NUM_MUTEX));
+    if(mutex_num>=NUM_MUTEX){
+      mutex_num = NUM_MUTEX - 1;
+    }
+    pthread_mutex_lock(mutexes+mutex_num);
+    int bb = busybits[index];
+    unsigned kh = k_hashes[index];
+    int chn = chns[index];
+    void* kp = keyps[index];
+    if (bb != 0 && kh == hash) {
+      //@ close pred_mapping(nil, nil, kpr, nil);
+      //@ extract_pred_for_key(nil, nil, nil, index, bbs, ks);
+      //@ append_nil(reverse(take(index, kps)));
+      //@ append_nil(reverse(take(index, bbs)));
+      //@ append_nil(reverse(take(index, ks)));
+      if (eq(kp, keyp)) {
+        /*@ recover_pred_mapping(kps, bbs, ks, index); @*/
+        //@ hmap_find_this_key(hm, index, k);
+        //@ close hmapping<kt>(kpr, hsh, capacity, busybits, kps, k_hashes, hm);
+        //@ close buckets_ks_insync(chns, capacity, buckets, hsh, ks);
+        out_index= (int)index;
+        *value = values[out_index];
+        pthread_mutex_unlock(mutexes+mutex_num);
+        return 1;
+      }else{
+        pthread_mutex_unlock(mutexes+mutex_num);
+      }
+      //@ recover_pred_mapping(kps, bbs, ks, index);
+    } else {
+      //@ if (bb != 0) no_hash_no_key(ks, khs, k, index, hsh);
+      //@ if (bb == 0) no_bb_no_key(ks, bbs, index);
+      if (chn == 0) {
+        //@ assert length(chnlist) == capacity;
+        //@ buckets_keys_chns_same_len(buckets);
+        //@ assert length(buckets) == capacity;
+        //@ no_crossing_chains_here(buckets, index);
+        //@ assert nil == get_crossing_chains_fp(buckets, index);
+        //@ key_is_contained_in_the_bucket(buckets, capacity, hsh, k);
+        //@ assert true == up_to(nat_of_int(i), (byLoopNthProp)(ks, (neq)(some(k)), capacity, start));
+        //@ assert true == up_to(nat_of_int(i), (byLoopNthProp)(ks, (neq)(some(k)), capacity, loop_fp(hsh(k), capacity)));
+        //@ assert true == up_to(succ(nat_of_int(i)), (byLoopNthProp)(ks, (neq)(some(k)), capacity, loop_fp(hsh(k), capacity)));
+        //@ assert true == up_to(nat_of_int(i+1), (byLoopNthProp)(ks, (neq)(some(k)), capacity, loop_fp(hsh(k), capacity)));
+        //@ assert buckets != nil;
+        //@ chains_depleted_no_hope(buckets, i, loop_fp(hsh(k), capacity), k, capacity, hsh);
+        //@ assert false == hmap_exists_key_fp(hm, k);
+        //@ close hmapping<kt>(kpr, hsh, capacity, busybits, kps, k_hashes, hm);
+        //@ close buckets_ks_insync(chns, capacity, buckets, hsh, ks);
+        pthread_mutex_unlock(mutexes+mutex_num);
+        return 0;
+      }else{
+        pthread_mutex_unlock(mutexes+mutex_num);
+      }
+      //@ assert(length(ks) == capacity);
+    }
+    //@ assert(nth(index, ks) != some(k));
+    //@ assert(true == neq(some(k), nth(index, ks)));
+    //@ assert(true == neq(some(k), nth(loop_fp(i+start,capacity), ks)));
+    //@ assert(nat_of_int(i+1) == succ(nat_of_int(i)));
   }
-  //@ hmapping_ks_capacity(hm, capacity);
-  //@ assert(index < capacity);
-  //@ assert(ints(values, capacity, ?val_arr));
-  *value = values[index];
-  //@ hmap_find_returns_the_key(hm, val_arr, m, k);
-  //@ map_extract_recp(m, k, recp);
-  //@ close mapping(m, addrs, kp, recp, hsh, capacity, busybits, keyps, k_hashes, chns, values);
-  return 1;
+  //@ pred_mapping_same_len(bbs, ks);
+  //@ by_loop_for_all(ks, (neq)(some(k)), start, capacity, nat_of_int(capacity));
+  //@ no_key_found(ks, k);
+  //@ close buckets_ks_insync(chns, capacity, buckets, hsh, ks);
+  //@ close hmapping<kt>(kpr, hsh, capacity, busybits, kps, k_hashes, hm);
+  return 0;
+  
 }
 
 
@@ -2162,7 +2252,7 @@ void map_impl_put/*@ <kt> @*/(int* busybits, void** keyps,
                               unsigned* k_hashes, int* chns,
                               int* values,
                               void* keyp, unsigned hash, int value,
-                              unsigned capacity)
+                              unsigned capacity, pthread_mutex_t *mutexes, unsigned *size)
 /*@ requires mapping<kt>(?m, ?addrs, ?kp, ?recp, ?hsh, capacity, busybits,
                          keyps, k_hashes, chns, values) &*&
              [0.25]kp(keyp, ?k) &*& true == recp(k, value) &*&
@@ -2189,7 +2279,116 @@ void map_impl_put/*@ <kt> @*/(int* busybits, void** keyps,
   //@ buckets_keys_chns_same_len(buckets);
   //@ close buckets_ks_insync(chns, capacity, buckets, hsh, ks);
   //@ assert length(buckets) == capacity;
-  unsigned index = find_empty(busybits, chns, start, capacity);
+  // unsigned index = find_empty(busybits, chns, start, capacity);
+
+
+  // PASINDU
+
+  unsigned i = 0;
+  for (; i < capacity; ++i)
+    /*@ invariant pred_mapping(kps, bbs, kp, ks) &*&
+                  ints(busybits, capacity, bbs) &*&
+                  uints(k_hashes, capacity, khs) &*&
+                  pointers(keyps, capacity, kps) &*&
+                  0 <= i &*& i <= capacity &*&
+                  true == up_to(nat_of_int(i),
+                                (byLoopNthProp)(ks, cell_busy,
+                                                capacity, start)) &*&
+                  buckets_ks_insync_Xchain(chns, capacity, buckets, hsh,
+                                           start, loop_fp(start + i, capacity),
+                                           ks);
+      @*/
+    //@ decreases capacity - i;
+  {
+    //@ pred_mapping_same_len(bbs, ks);
+    unsigned index = loop(start + i, capacity);
+    int mutex_num = (index - (index%(capacity/NUM_MUTEX)))/((capacity/NUM_MUTEX));
+    if(mutex_num>=NUM_MUTEX){
+      mutex_num = NUM_MUTEX - 1;
+    }
+    pthread_mutex_lock(mutexes+mutex_num);
+    
+    /*@ open buckets_ks_insync_Xchain(chns, capacity, buckets, hsh,
+                                      start, index, ks);
+      @*/
+    //@ assert ints(chns, capacity, ?chnlist);
+    int bb = busybits[index];
+    if (0 == bb) {
+      //@ zero_bbs_is_for_empty(bbs, ks, index);
+      //@ close hmapping<kt>(kp, hsh, capacity, busybits, kps, k_hashes, hm);
+      /*@ close buckets_ks_insync_Xchain(chns, capacity, buckets, hsh,
+                                         start, index, ks);
+        @*/
+      busybits[index] = 1;
+      keyps[index] = keyp;
+      k_hashes[index] = hash;
+      values[index] = value;
+      size[mutex_num] = size[mutex_num]+1;
+      pthread_mutex_unlock(mutexes+mutex_num);
+      break;
+    }
+    int chn = chns[index];
+    
+    //@ buckets_keys_chns_same_len(buckets);
+    //@ buckets_ok_chn_bound(buckets, index);
+    /*@ outside_part_chn_no_effect(buckets_get_chns_fp(buckets), start,
+                                   index, capacity);
+      @*/
+    //@ assert chn <= capacity;
+    //@ assert capacity < INT_MAX;
+    chns[index] = chn + 1;
+    pthread_mutex_unlock(mutexes+mutex_num);
+
+    //@ bb_nonzero_cell_busy(bbs, ks, index);
+    //@ assert(true == cell_busy(nth(loop_fp(i+start,capacity), ks)));
+    //@ assert(nat_of_int(i+1) == succ(nat_of_int(i)));
+    /*@ Xchain_add_one(chnlist, buckets_get_chns_fp(buckets), start,
+                       index < start ? capacity + index - start : index - start,
+                       capacity);
+      @*/
+    /*@
+      if (i + 1 == capacity) {
+        by_loop_for_all(ks, cell_busy, start, capacity, nat_of_int(capacity));
+        full_size(ks);
+        assert(false);
+      }
+      @*/
+    /*@
+      if (index < start) {
+        if (start + i < capacity) loop_bijection(start + i, capacity);
+        loop_injection_n(start + i + 1 - capacity, capacity, 1);
+        loop_bijection(start + i + 1 - capacity, capacity);
+        loop_injection_n(start + i - capacity, capacity, 1);
+        loop_bijection(start + i - capacity, capacity);
+      } else {
+        if (capacity <= start + i) {
+          loop_injection_n(start + i - capacity, capacity, 1);
+          loop_bijection(start + i - capacity, capacity);
+        }
+        loop_bijection(start + i, capacity);
+        if (start + i + 1 == capacity) {
+          loop_injection_n(start + i + 1 - capacity, capacity, 1);
+          loop_bijection(start + i + 1 - capacity, capacity);
+        } else {
+          loop_bijection(start + i + 1, capacity);
+        }
+      }
+      @*/
+    /*@
+        close buckets_ks_insync_Xchain(chns, capacity, buckets, hsh,
+                                       start, loop_fp(start+i+1, capacity),
+                                       ks);
+      @*/
+  }
+  //@ pred_mapping_same_len(bbs, ks);
+  //@ by_loop_for_all(ks, cell_busy, start, capacity, nat_of_int(capacity));
+  //@ full_size(ks);
+  //@ close hmapping<kt>(kp, hsh, capacity, busybits, kps, k_hashes, hm);
+
+  // PASINDU
+
+
+
 
 
   //@ hmapping_ks_capacity(hm, capacity);
@@ -2201,10 +2400,7 @@ void map_impl_put/*@ <kt> @*/(int* busybits, void** keyps,
   //@ assert(hm == hmap(ks, ?khs));
   //@ assert(ints(values, capacity, ?vals));
   //@ hmap_coherent_hash_update(ks, khs, hsh, index, k, hash);
-  busybits[index] = 1;
-  keyps[index] = keyp;
-  k_hashes[index] = hash;
-  values[index] = value;
+  
   /*@ close hmapping(kp, hsh, capacity, busybits, update(index, keyp, kps),
                      k_hashes, hmap_put_key_fp(hm, index, k, hash));
     @*/
@@ -2436,7 +2632,7 @@ void map_impl_erase/*@ <kt> @*/(int* busybits, void** keyps,
                                 unsigned* k_hashes, int* chns,
                                 void* keyp,
                                 map_keys_equality* eq, unsigned hash, unsigned capacity,
-                                void** keyp_out)
+                                void** keyp_out, pthread_mutex_t *mutexes, unsigned *size)
 /*@ requires mapping<kt>(?m, ?addrs, ?kp, ?recp, ?hsh, capacity, busybits,
                          keyps, k_hashes, chns, ?values) &*&
              [?fk]kp(keyp, ?k) &*&
@@ -2461,7 +2657,7 @@ void map_impl_erase/*@ <kt> @*/(int* busybits, void** keyps,
   //@ map_erase_hasnt(m, k);
   //@ hmap_exists_iff_map_has(hm, m, k);
   find_key_remove_chain(busybits, keyps, k_hashes, chns,
-                        keyp, eq, hash, capacity, keyp_out);
+                        keyp, eq, hash, capacity, keyp_out, mutexes, size);
   //@ hmap_exists_iff_map_has(hm, m, k);
   // @ hmapping_ks_capacity(hm, capacity);
   // @ assert(index < capacity);
