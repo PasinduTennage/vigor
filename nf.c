@@ -4,7 +4,7 @@
 #include <sys/types.h>
 #include <unistd.h>
 #include <stdio.h>
-
+#include <pthread.h>
 #include <rte_common.h>
 #include <rte_eal.h>
 #include <rte_errno.h>
@@ -85,6 +85,11 @@ static const uint16_t TX_QUEUES_COUNT = 1;
 static const uint16_t RX_QUEUE_SIZE = 96;
 static const uint16_t TX_QUEUE_SIZE = 96;
 
+pthread_mutex_t lock_rw;
+pthread_mutex_t empty_rw;
+pthread_mutex_t wChance_rw;
+int readers = 0;
+
 void flood(struct rte_mbuf *frame, uint16_t skip_device, uint16_t nb_devices) {
   rte_mbuf_refcnt_set(frame, nb_devices - 1);
   int total_sent = 0;
@@ -156,26 +161,58 @@ static int nf_init_device(uint16_t device, struct rte_mempool *mbuf_pool) {
 
 void *worker(void *arg) {
   int a = *((int *)arg);
+  printf("%d", a);
   int i = 0;
-  while (1) {
+  while (i<=10000) {
     vigor_time_t VIGOR_NOW = current_time();
     i++;
 
     a = (a + 1) * 1000;
-    nf_process(NULL, NULL, NULL, VIGOR_NOW, a);
-    if (i == 1000) {
-      printf("Fuck it ran to completion");
-      exit(0);
+
+    pthread_mutex_lock(&wChance_rw);
+    pthread_mutex_unlock(&wChance_rw);
+    pthread_mutex_lock(&lock_rw);
+    readers++;
+    if (readers == 1) {
+      pthread_mutex_lock(&empty_rw);
     }
-    return NULL;
+    pthread_mutex_unlock(&lock_rw);
+
+    nf_process(NULL, NULL, NULL, VIGOR_NOW, a);
+
+    pthread_mutex_lock(&lock_rw);
+    readers--;
+    if (readers == 0) {
+      pthread_mutex_unlock(&empty_rw);
+    }
+    pthread_mutex_unlock(&lock_rw);
+
+    printf("%d th iteration \n", i);
+
+    if (i == 1000) {
+      printf("Ran to completion\n");
+      
+    }
   }
+  printf("Thread with id %d ran to completion \n", a);
+  return NULL;
 }
 
 void *expirator(void *arg) {
+  int i = 0;
   while (1) {
+    i++;
+    // printf("Expirator running for %dth time\n", i);
+    pthread_mutex_lock(&wChance_rw);
+    pthread_mutex_lock(&empty_rw);
+
     nf_expire(current_time());
-    return NULL;
+    pthread_mutex_unlock(&wChance_rw);
+    pthread_mutex_unlock(&empty_rw);
+    // printf("Expirator completed running for %dth time\n", i);
+    usleep(1);
   }
+  return NULL;
 }
 
 static void lcore_main(void) {
@@ -224,24 +261,34 @@ static void lcore_main(void) {
   //   }
   // VIGOR_LOOP_END
 
+  if (pthread_mutex_init(&lock_rw, NULL) != 0 ||
+      pthread_mutex_init(&empty_rw, NULL) != 0 ||
+      pthread_mutex_init(&wChance_rw, NULL) != 0) {
+    printf("\n mutex init failed\n");
+    return 0;
+  }
   pthread_t expirators;
   int err = pthread_create(&(expirators), NULL, &expirator, 0);
-  pthread_join(expirators, NULL);
 
   pthread_t workers[10];
   int i = 0;
+  
   while (i < 10) {
-    int err = pthread_create(&(workers[i]), NULL, &worker, i);
+    int *arg_int = malloc(sizeof(*arg_int));
+    *arg_int = 0;
+    *arg_int = i;
+    int err = pthread_create(&(workers[i]), NULL, &worker, arg_int);
     if (err != 0)
       printf("\ncan't create thread :[%s]", strerror(err));
     i++;
   }
   i = 0;
-  
-  while (i<10) {
+
+  while (i < 10) {
     pthread_join(workers[i], NULL);
     i++;
   }
+  pthread_join(expirators, NULL);
 }
 
 // --- Main ---

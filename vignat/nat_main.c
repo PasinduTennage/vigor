@@ -6,6 +6,8 @@
 #include "nat_config.h"
 #include "nf-log.h"
 #include "nf-util.h"
+#include <pthread.h>
+#include <unistd.h>
 
 struct nf_config config;
 
@@ -24,31 +26,39 @@ uint16_t get_random_int(uint16_t lower_bound, uint16_t upper_bound) {
   return rand() % (upper_bound - lower_bound);
 }
 
-// int count = flow_manager_expire(flow_manager, now); // should run in another thread as garbafe collection
+// int count = flow_manager_expire(flow_manager, now); // should run in another
+// thread as garbafe collection
 
-int nf_expire(vigor_time_t now){
+int nf_expire(vigor_time_t now) {
   // write lock
-  return flow_manager_expire(flow_manager, now); // should run in another thread as garbafe collection
+  int num_expired = flow_manager_expire(
+      flow_manager, now); // should run in another thread as garbafe collection
+  if (num_expired>0) {
+    NF_DEBUG("% " PRIu16 "number of flows deleted", num_expired);
+  }
+  return num_expired;
 }
 
 int nf_process(uint16_t device, uint8_t *buffer, uint16_t buffer_length,
                vigor_time_t now, int a) {
 
-                 // read lock
+  // read lock
+
   device = get_random_int(0, 2);
   // generate a flow
-  
-  struct FlowId id = { .src_port = get_random_int(a-11, a-1),
-                       .dst_port = get_random_int(a-11, a-1),
-                       .src_ip = get_random_int(a-11, a-1),
-                       .dst_ip = get_random_int(a-11, a-1),
-                       .protocol = 3,
-                       .internal_device = 0};
 
-  // int count = flow_manager_expire(flow_manager, now); // should run in another thread as garbafe collection
+  struct FlowId id = { .src_port = get_random_int(a - 11, a - 1),
+                       .dst_port = get_random_int(a - 11, a - 1),
+                       .src_ip = get_random_int(a - 11, a - 1),
+                       .dst_ip = get_random_int(a - 11, a - 1),
+                       .protocol = 3,
+                       .internal_device = 0 };
+
+  // int count = flow_manager_expire(flow_manager, now); // should run in
+  // another thread as garbafe collection
 
   // NF_DEBUG("% number of flows deleted" PRId64, now);
-  
+
   // NF_DEBUG("Flows have been expired");
 
   // struct ether_hdr *ether_header = nf_then_get_ether_header(buffer);
@@ -74,8 +84,9 @@ int nf_process(uint16_t device, uint8_t *buffer, uint16_t buffer_length,
     // NF_DEBUG("Device %" PRIu16 " is external", device);
 
     struct FlowId internal_flow;
-    if (flow_manager_get_external(flow_manager, id.dst_port, now, &internal_flow)) {
-      //  NF_DEBUG("Found internal flow.");
+    if (flow_manager_get_external(flow_manager, id.dst_port, now,
+                                  &internal_flow)) {
+      // NF_DEBUG("Found internal flow.");
       // LOG_FLOWID(&internal_flow, NF_DEBUG);
 
       if (internal_flow.dst_ip != id.src_ip |
@@ -117,15 +128,14 @@ int nf_process(uint16_t device, uint8_t *buffer, uint16_t buffer_length,
               flow_manager, &id, device, now,
               &external_port)) { // assign a port number and allocates a new
                                  // entry in the NAT table
-        NF_DEBUG("No space for the flow, dropping");
+        // NF_DEBUG("No space for the flow, dropping");
         return device;
-      }
-      else{
-        NF_DEBUG("Packet Allocated");  
+      } else {
+        // NF_DEBUG("Packet Allocated");
       }
 
-    }else{
-      NF_DEBUG("Packet found");
+    } else {
+      // NF_DEBUG("Packet found");
     }
 
     // NF_DEBUG("Forwarding from ext port:%d", external_port);
