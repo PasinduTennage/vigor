@@ -45,6 +45,7 @@ int nf_process(uint16_t device, uint8_t *buffer, uint16_t buffer_length,
   // read lock
 
   device = get_random_int(0, 2);
+  
   // generate a flow
 
   struct FlowId id = { .src_port = get_random_int(a - 11, a - 1),
