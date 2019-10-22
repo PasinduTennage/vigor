@@ -31,10 +31,9 @@ uint16_t get_random_int(uint16_t lower_bound, uint16_t upper_bound) {
 
 int nf_expire(vigor_time_t now) {
   // write lock
-  int num_expired = flow_manager_expire(
-      flow_manager, now); // should run in another thread as garbafe collection
-  if (num_expired>0) {
-    NF_DEBUG("% " PRIu16 "number of flows deleted", num_expired);
+  int num_expired = flow_manager_expire(flow_manager, now); // should run in another thread as garbafe collection
+  if (num_expired > 0) {
+    // NF_DEBUG("% " PRIu16 "number of flows deleted", num_expired);
   }
   return num_expired;
 }
@@ -44,16 +43,20 @@ int nf_process(uint16_t device, uint8_t *buffer, uint16_t buffer_length,
 
   // read lock
 
-  device = get_random_int(0, 2);
-  
+  device = device;
+  int retVal = -1;
+
   // generate a flow
 
-  struct FlowId id = { .src_port = get_random_int(a - 11, a - 1),
-                       .dst_port = get_random_int(a - 11, a - 1),
-                       .src_ip = get_random_int(a - 11, a - 1),
-                       .dst_ip = get_random_int(a - 11, a - 1),
+  struct FlowId id = { .src_port = a, //get_random_int(a - 11, a - 1),
+                       .dst_port = a, //get_random_int(a - 11, a - 1),
+                       .src_ip = a, // get_random_int(a - 11, a - 1),
+                       .dst_ip = a, //get_random_int(a - 11, a - 1),
                        .protocol = 3,
                        .internal_device = 0 };
+  if(buffer_length!=0){
+    id.dst_port=buffer_length;
+  }
 
   // int count = flow_manager_expire(flow_manager, now); // should run in
   // another thread as garbafe collection
@@ -94,15 +97,18 @@ int nf_process(uint16_t device, uint8_t *buffer, uint16_t buffer_length,
           internal_flow.dst_port != id.src_port |
           internal_flow.protocol != id.protocol) {
         // NF_DEBUG("Spoofing attempt, dropping.");
-        return device;
+        retVal = 5;
+        return retVal;
       }
 
       id.dst_ip = internal_flow.src_ip;
       id.dst_port = internal_flow.src_port;
       dst_device = 0;
+      retVal = 3;
     } else {
       // NF_DEBUG("Unknown flow, dropping");
-      return device;
+      retVal = 4;
+      return retVal;
     }
   } else {
     // struct FlowId id = { .src_port = tcpudp_header->src_port,
@@ -130,13 +136,16 @@ int nf_process(uint16_t device, uint8_t *buffer, uint16_t buffer_length,
               &external_port)) { // assign a port number and allocates a new
                                  // entry in the NAT table
         // NF_DEBUG("No space for the flow, dropping");
-        return device;
+        retVal = 5;
+        return retVal;
       } else {
+        retVal = external_port;
         // NF_DEBUG("Packet Allocated");
       }
 
     } else {
       // NF_DEBUG("Packet found");
+      retVal = 2;
     }
 
     // NF_DEBUG("Forwarding from ext port:%d", external_port);
@@ -153,5 +162,5 @@ int nf_process(uint16_t device, uint8_t *buffer, uint16_t buffer_length,
   // ether_header->s_addr = config.device_macs[dst_device];
   // ether_header->d_addr = config.endpoint_macs[dst_device];
 
-  return dst_device;
+  return retVal;
 }

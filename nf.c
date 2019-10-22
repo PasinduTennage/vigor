@@ -74,6 +74,8 @@
     }
 #endif // KLEE_VERIFICATION
 
+#define NUM_WORKERS 10
+
 // Number of RX/TX queues
 static const uint16_t RX_QUEUES_COUNT = 1;
 static const uint16_t TX_QUEUES_COUNT = 1;
@@ -89,7 +91,7 @@ pthread_mutex_t lock_rw;
 pthread_mutex_t empty_rw;
 pthread_mutex_t wChance_rw;
 int readers = 0;
-int args[10] = { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9 };
+int args[NUM_WORKERS] = { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
 
 void flood(struct rte_mbuf *frame, uint16_t skip_device, uint16_t nb_devices) {
   rte_mbuf_refcnt_set(frame, nb_devices - 1);
@@ -166,9 +168,40 @@ void *worker(void *arg) {
   // printf("value passed to worker is %d \n", local_a);
   printf("Thread with value %d started\n", local_a);
   int i = 0;
-  while (i <= 1000000) {
-    vigor_time_t VIGOR_NOW = current_time();
+  int success = 0;
+  int error = 0;
+  while (i <= 1000) {
     i++;
+    
+    vigor_time_t VIGOR_NOW = current_time();
+    
+    
+    pthread_mutex_lock(&wChance_rw);
+    pthread_mutex_unlock(&wChance_rw);
+    pthread_mutex_lock(&lock_rw);
+    readers++;
+    if (readers == 1) {
+      pthread_mutex_lock(&empty_rw);
+    }
+    pthread_mutex_unlock(&lock_rw);
+    // if (readers >0) {
+    //   printf("Worker running, Number of workers in the system is %d \n",
+    //          readers);
+    // }
+
+
+    int ret1= nf_process(0, NULL, 0, VIGOR_NOW, (local_a + 1) * 10000-i);
+
+    pthread_mutex_lock(&lock_rw);
+    readers--;
+    if (readers == 0) {
+      pthread_mutex_unlock(&empty_rw);
+    }
+    pthread_mutex_unlock(&lock_rw);
+
+
+    VIGOR_NOW = current_time();
+    
 
     pthread_mutex_lock(&wChance_rw);
     pthread_mutex_unlock(&wChance_rw);
@@ -178,11 +211,13 @@ void *worker(void *arg) {
       pthread_mutex_lock(&empty_rw);
     }
     pthread_mutex_unlock(&lock_rw);
-    if (readers >0) {
-      printf("Worker running, Number of workers in the system is %d \n",
-             readers);
-    }
-    nf_process(NULL, NULL, NULL, VIGOR_NOW, (local_a + 1) * 1000);
+    // if (readers >0) {
+    //   printf("Worker running, Number of workers in the system is %d \n",
+    //          readers);
+    // }
+
+
+    int ret2= nf_process(0, NULL, 0, VIGOR_NOW, (local_a + 1) * 10000-i);
 
     pthread_mutex_lock(&lock_rw);
     readers--;
@@ -191,28 +226,90 @@ void *worker(void *arg) {
     }
     pthread_mutex_unlock(&lock_rw);
 
-    // printf("%d th iteration \n", i);
+    VIGOR_NOW = current_time();
+    
 
-    if (i == 1000) {
-      // printf("Ran to completion\n");
+    pthread_mutex_lock(&wChance_rw);
+    pthread_mutex_unlock(&wChance_rw);
+    pthread_mutex_lock(&lock_rw);
+    readers++;
+    if (readers == 1) {
+      pthread_mutex_lock(&empty_rw);
     }
+    pthread_mutex_unlock(&lock_rw);
+    // if (readers >0) {
+    //   printf("Worker running, Number of workers in the system is %d \n",
+    //          readers);
+    // }
+
+
+    int ret3= nf_process(1, NULL, ret1, VIGOR_NOW, (local_a + 1) * 10000-i);
+
+    pthread_mutex_lock(&lock_rw);
+    readers--;
+    if (readers == 0) {
+      pthread_mutex_unlock(&empty_rw);
+    }
+    pthread_mutex_unlock(&lock_rw);
+
+    VIGOR_NOW = current_time();
+    
+
+    pthread_mutex_lock(&wChance_rw);
+    pthread_mutex_unlock(&wChance_rw);
+    pthread_mutex_lock(&lock_rw);
+    readers++;
+    if (readers == 1) {
+      pthread_mutex_lock(&empty_rw);
+    }
+    pthread_mutex_unlock(&lock_rw);
+    // if (readers >0) {
+    //   printf("Worker running, Number of workers in the system is %d \n",
+    //          readers);
+    // }
+
+
+    int ret4= nf_process(1, NULL, 0, VIGOR_NOW, (local_a + 1) * 10000 - 1001);
+
+    pthread_mutex_lock(&lock_rw);
+    readers--;
+    if (readers == 0) {
+      pthread_mutex_unlock(&empty_rw);
+    }
+    pthread_mutex_unlock(&lock_rw);
+
+    if(ret2!=2 || ret3!=3 || (ret4!=4)){
+      error++;
+    }
+    else{
+      success++;
+    }
+   
+    
   }
-  printf("Thread with value %d finished \n", local_a);
+  printf("Thread with value %d finished with success %d and error %d \n", local_a, success, error);
+  
+  args[local_a] = -1;
   return NULL;
 }
 
 void *expirator(void *arg) {
-  int i = 0;
   while (1) {
-    i++;
     pthread_mutex_lock(&wChance_rw);
     pthread_mutex_lock(&empty_rw);
-    printf("Expirator running, Number of workers in the system is %d \n",readers);
+    // printf("Expirator running, Number of workers in the system is %d \n",readers);
     nf_expire(current_time());
-
     pthread_mutex_unlock(&wChance_rw);
     pthread_mutex_unlock(&empty_rw);
-    usleep(1);
+    int i = 0;
+    for (i=0; i< NUM_WORKERS; i++){
+      if(args[i]!=-1){
+        break;
+      }else if(i==(NUM_WORKERS-1)){
+        return;
+      }
+    }
+    usleep(10);
   }
   return NULL;
 }
@@ -263,6 +360,7 @@ static void lcore_main(void) {
   //   }
   // VIGOR_LOOP_END
 
+
   if (pthread_mutex_init(&lock_rw, NULL) != 0 ||
       pthread_mutex_init(&empty_rw, NULL) != 0 ||
       pthread_mutex_init(&wChance_rw, NULL) != 0) {
@@ -270,12 +368,12 @@ static void lcore_main(void) {
     return 0;
   }
   pthread_t expirators;
-  int err = pthread_create(&(expirators), NULL, &expirator, 0);
+  // int err = pthread_create(&(expirators), NULL, &expirator, 0);
 
-  pthread_t workers[10];
+  pthread_t workers[NUM_WORKERS];
   int i = 0;
 
-  while (i < 10) {
+  while (i < NUM_WORKERS) {
     int err = pthread_create(&(workers[i]), NULL, &worker, args + i);
     if (err != 0)
       printf("\ncan't create thread :[%s]", strerror(err));
@@ -283,13 +381,15 @@ static void lcore_main(void) {
   }
   i = 0;
 
-  while (i < 10) {
+  while (i < NUM_WORKERS) {
     pthread_join(workers[i], NULL);
     i++;
   }
-  pthread_join(expirators, NULL);
+  // pthread_join(expirators, NULL);
 
-  printf("Main is now ending");
+
+
+  printf("Main is now ending \n");
 }
 
 // --- Main ---
