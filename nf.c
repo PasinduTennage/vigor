@@ -20,6 +20,7 @@
 
 #include <pthread.h>
 
+
 #ifdef KLEE_VERIFICATION
 #  include "libvig/models/hardware.h"
 #  include "libvig/models/verified/vigor-time-control.h"
@@ -74,7 +75,8 @@
     }
 #endif // KLEE_VERIFICATION
 
-#define NUM_WORKERS 10
+#define NUM_WORKERS 40
+#define PACKETS_PER_WORKER 100000/NUM_WORKERS
 
 // Number of RX/TX queues
 static const uint16_t RX_QUEUES_COUNT = 1;
@@ -91,7 +93,7 @@ pthread_mutex_t lock_rw;
 pthread_mutex_t empty_rw;
 pthread_mutex_t wChance_rw;
 int readers = 0;
-int args[NUM_WORKERS] = { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
+int args[NUM_WORKERS] ;
 
 void flood(struct rte_mbuf *frame, uint16_t skip_device, uint16_t nb_devices) {
   rte_mbuf_refcnt_set(frame, nb_devices - 1);
@@ -170,7 +172,7 @@ void *worker(void *arg) {
   int i = 0;
   int success = 0;
   int error = 0;
-  while (i <= 1000) {
+  while (i <= PACKETS_PER_WORKER-1) {
     i++;
     
     vigor_time_t VIGOR_NOW = current_time();
@@ -190,7 +192,8 @@ void *worker(void *arg) {
     // }
 
 
-    int ret1= nf_process(0, NULL, 0, VIGOR_NOW, (local_a + 1) * 10000-i);
+    int ret1= nf_process(0, NULL, 100000, VIGOR_NOW, (local_a + 1) * 1000000-i);
+    
 
     pthread_mutex_lock(&lock_rw);
     readers--;
@@ -199,7 +202,7 @@ void *worker(void *arg) {
     }
     pthread_mutex_unlock(&lock_rw);
 
-
+    
     VIGOR_NOW = current_time();
     
 
@@ -217,7 +220,7 @@ void *worker(void *arg) {
     // }
 
 
-    int ret2= nf_process(0, NULL, 0, VIGOR_NOW, (local_a + 1) * 10000-i);
+    int ret2= nf_process(0, NULL, 100000, VIGOR_NOW, (local_a + 1) * 1000000-i);
 
     pthread_mutex_lock(&lock_rw);
     readers--;
@@ -226,6 +229,8 @@ void *worker(void *arg) {
     }
     pthread_mutex_unlock(&lock_rw);
 
+
+    
     VIGOR_NOW = current_time();
     
 
@@ -243,7 +248,7 @@ void *worker(void *arg) {
     // }
 
 
-    int ret3= nf_process(1, NULL, ret1, VIGOR_NOW, (local_a + 1) * 10000-i);
+    int ret3= nf_process(1, NULL, ret1, VIGOR_NOW, (local_a + 1) * 1000000-i);
 
     pthread_mutex_lock(&lock_rw);
     readers--;
@@ -252,6 +257,7 @@ void *worker(void *arg) {
     }
     pthread_mutex_unlock(&lock_rw);
 
+    usleep(1);
     VIGOR_NOW = current_time();
     
 
@@ -269,7 +275,7 @@ void *worker(void *arg) {
     // }
 
 
-    int ret4= nf_process(1, NULL, 0, VIGOR_NOW, (local_a + 1) * 10000 - 1001);
+    int ret4= nf_process(1, NULL, 100000, VIGOR_NOW, (local_a + 1) * 1000000 - PACKETS_PER_WORKER-1);
 
     pthread_mutex_lock(&lock_rw);
     readers--;
@@ -278,12 +284,14 @@ void *worker(void *arg) {
     }
     pthread_mutex_unlock(&lock_rw);
 
-    if(ret2!=2 || ret3!=3 || (ret4!=4)){
+    if(ret2!=2 || ret3!=3 || !( ret4==4 || ret4==5 )){
       error++;
     }
     else{
       success++;
     }
+
+
    
     
   }
@@ -360,6 +368,11 @@ static void lcore_main(void) {
   //   }
   // VIGOR_LOOP_END
 
+  vigor_time_t t1 = current_time();
+  int k;
+  for(k=0; k< NUM_WORKERS; k++){
+    args[k] = k;
+  }
 
   if (pthread_mutex_init(&lock_rw, NULL) != 0 ||
       pthread_mutex_init(&empty_rw, NULL) != 0 ||
@@ -368,7 +381,7 @@ static void lcore_main(void) {
     return 0;
   }
   pthread_t expirators;
-  // int err = pthread_create(&(expirators), NULL, &expirator, 0);
+  int err = pthread_create(&(expirators), NULL, &expirator, 0);
 
   pthread_t workers[NUM_WORKERS];
   int i = 0;
@@ -385,8 +398,13 @@ static void lcore_main(void) {
     pthread_join(workers[i], NULL);
     i++;
   }
-  // pthread_join(expirators, NULL);
+  pthread_join(expirators, NULL);
 
+  vigor_time_t t2 = current_time();
+
+  vigor_time_t time_spent = t2- t1;
+
+  printf("Time spent for total execution is %" PRId64 "\n", time_spent);
 
 
   printf("Main is now ending \n");

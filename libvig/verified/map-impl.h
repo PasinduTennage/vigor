@@ -1,6 +1,6 @@
 #ifndef _MAP_IMPL_H_INCLUDED_
 #define _MAP_IMPL_H_INCLUDED_
-#define NUM_MUTEX 10
+#define NUM_MUTEX 20
 
 #include <stdbool.h>
 #include <pthread.h>

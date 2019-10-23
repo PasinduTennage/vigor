@@ -54,7 +54,7 @@ int nf_process(uint16_t device, uint8_t *buffer, uint16_t buffer_length,
                        .dst_ip = a, //get_random_int(a - 11, a - 1),
                        .protocol = 3,
                        .internal_device = 0 };
-  if(buffer_length!=0){
+  if(device == 1 && buffer_length!=100000){
     id.dst_port=buffer_length;
   }
 
@@ -136,7 +136,7 @@ int nf_process(uint16_t device, uint8_t *buffer, uint16_t buffer_length,
               &external_port)) { // assign a port number and allocates a new
                                  // entry in the NAT table
         // NF_DEBUG("No space for the flow, dropping");
-        retVal = 5;
+        retVal = 6;
         return retVal;
       } else {
         retVal = external_port;
