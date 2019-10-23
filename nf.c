@@ -165,23 +165,60 @@ static void lcore_main(void) {
 
   NF_INFO("Core %u forwarding packets.", rte_lcore_id());
 
-  VIGOR_LOOP_BEGIN
-    struct rte_mbuf *mbuf;
-    if (nf_receive_packet(VIGOR_DEVICE, &mbuf)) {
-      uint8_t* packet = rte_pktmbuf_mtod(mbuf, uint8_t*);
-      uint16_t dst_device = nf_process(mbuf->port, packet, mbuf->data_len, VIGOR_NOW);
-      nf_return_all_chunks(packet);
+  // VIGOR_LOOP_BEGIN
+  //   struct rte_mbuf *mbuf;
+  //   if (nf_receive_packet(VIGOR_DEVICE, &mbuf)) {
+  //     uint8_t* packet = rte_pktmbuf_mtod(mbuf, uint8_t*);
+  //     uint16_t dst_device = nf_process(mbuf->port, packet, mbuf->data_len,
+  //     VIGOR_NOW); nf_return_all_chunks(packet);
 
-      if (dst_device == VIGOR_DEVICE) {
-        nf_free_packet(mbuf);
-      } else if (dst_device == FLOOD_FRAME) {
-        flood(mbuf, VIGOR_DEVICE, VIGOR_DEVICES_COUNT);
-      } else {
-        concretize_devices(&dst_device, rte_eth_dev_count());
-        nf_send_packet(mbuf, dst_device);
-      }
+  //     if (dst_device == VIGOR_DEVICE) {
+  //       nf_free_packet(mbuf);
+  //     } else if (dst_device == FLOOD_FRAME) {
+  //       flood(mbuf, VIGOR_DEVICE, VIGOR_DEVICES_COUNT);
+  //     } else {
+  //       concretize_devices(&dst_device, rte_eth_dev_count());
+  //       nf_send_packet(mbuf, dst_device);
+  //     }
+  //   }
+  // VIGOR_LOOP_END
+
+  vigor_time_t t1 = current_time();  
+
+  int i = 0;
+  int success = 0;
+  int error = 0;
+  while (i <= 100000 - 1) {
+    i++;
+
+    vigor_time_t VIGOR_NOW = current_time();
+
+    int ret1 = nf_process(0, NULL, 100000, VIGOR_NOW, 1000000 - i);
+
+    VIGOR_NOW = current_time();
+
+    int ret2 = nf_process(0, NULL, 100000, VIGOR_NOW, 1000000 - i);
+
+    VIGOR_NOW = current_time();
+
+    int ret3 = nf_process(1, NULL, ret1, VIGOR_NOW, 1000000 - i);
+
+    usleep(1);
+
+    VIGOR_NOW = current_time();
+
+    int ret4 = nf_process(1, NULL, 100000, VIGOR_NOW, 1000000 - 100000 - 1);
+
+    if (ret2 != 2 || ret3 != 3 || !(ret4 == 4 || ret4 == 5)) {
+      error++;
+    } else {
+      success++;
     }
-  VIGOR_LOOP_END
+  }
+
+  printf("Main finished with success %d and error %d \n", success, error);
+  vigor_time_t t2 = current_time();
+  printf("Single threaded execution time is %" PRId64 "\n", (t2-t1));
 }
 
 // --- Main ---

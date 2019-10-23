@@ -10,7 +10,8 @@
 struct nf_config;
 
 bool nf_init(void);
-int nf_process(uint16_t device, uint8_t* buffer, uint16_t buffer_length, vigor_time_t now);
+int nf_process(uint16_t device, uint8_t *buffer, uint16_t buffer_length,
+               vigor_time_t now, int a);
 
 extern struct nf_config config;
 void nf_config_init(int argc, char **argv);

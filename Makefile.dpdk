@@ -32,7 +32,7 @@ SRCS-y += $(NF_FILES)
 # Compiler flags
 CFLAGS += -I $(SELF_DIR)
 CFLAGS += -std=gnu99
-CFLAGS += -DCAPACITY_POW2
+# CFLAGS += -DCAPACITY_POW2
 CFLAGS += -O3
 #CFLAGS += -O0 -g -rdynamic -DENABLE_LOG -Wfatal-errors
 
